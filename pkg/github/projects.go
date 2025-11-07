@@ -12,7 +12,7 @@ import (
 
 	ghErrors "github.com/github/github-mcp-server/pkg/errors"
 	"github.com/github/github-mcp-server/pkg/translations"
-	"github.com/google/go-github/v76/github"
+	"github.com/google/go-github/v77/github"
 	"github.com/google/go-querystring/query"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -71,15 +71,20 @@ func ListProjects(getClient GetClientFn, t translations.TranslationHelperFunc) (
 			var projects []*github.ProjectV2
 			minimalProjects := []MinimalProject{}
 
+			var queryPtr *string
+			if queryStr != "" {
+				queryPtr = &queryStr
+			}
+
 			opts := &github.ListProjectsOptions{
-				ListProjectsPaginationOptions: github.ListProjectsPaginationOptions{PerPage: perPage},
-				Query:                         queryStr,
+				ListProjectsPaginationOptions: github.ListProjectsPaginationOptions{PerPage: &perPage},
+				Query:                         queryPtr,
 			}
 
 			if ownerType == "org" {
-				projects, resp, err = client.Projects.ListProjectsForOrg(ctx, owner, opts)
+				projects, resp, err = client.Projects.ListOrganizationProjects(ctx, owner, opts)
 			} else {
-				projects, resp, err = client.Projects.ListProjectsForUser(ctx, owner, opts)
+				projects, resp, err = client.Projects.ListUserProjects(ctx, owner, opts)
 			}
 
 			if err != nil {
@@ -157,9 +162,9 @@ func GetProject(getClient GetClientFn, t translations.TranslationHelperFunc) (to
 			var project *github.ProjectV2
 
 			if ownerType == "org" {
-				project, resp, err = client.Projects.GetProjectForOrg(ctx, owner, projectNumber)
+				project, resp, err = client.Projects.GetOrganizationProject(ctx, owner, projectNumber)
 			} else {
-				project, resp, err = client.Projects.GetProjectForUser(ctx, owner, projectNumber)
+				project, resp, err = client.Projects.GetUserProject(ctx, owner, projectNumber)
 			}
 			if err != nil {
 				return ghErrors.NewGitHubAPIErrorResponse(ctx,
