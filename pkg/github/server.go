@@ -1,10 +1,12 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/github/github-mcp-server/pkg/utils"
 	"github.com/google/go-github/v79/github"
@@ -32,6 +34,22 @@ func NewServer(version string, opts *mcp.ServerOptions) *mcp.Server {
 	}, opts)
 
 	return s
+}
+
+func CompletionsHandler(getClient GetClientFn) func(ctx context.Context, req *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
+	return func(ctx context.Context, req *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
+		switch req.Params.Ref.Type {
+		case "ref/resource":
+			if strings.HasPrefix(req.Params.Ref.URI, "repo://") {
+				return RepositoryResourceCompletionHandler(getClient)(ctx, req)
+			}
+			return nil, fmt.Errorf("unsupported resource URI: %s", req.Params.Ref.URI)
+		case "ref/prompt":
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unsupported ref type: %s", req.Params.Ref.Type)
+		}
+	}
 }
 
 // OptionalParamOK is a helper function that can be used to fetch a requested parameter from the request.
