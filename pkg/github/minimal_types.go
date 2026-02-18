@@ -185,6 +185,29 @@ type MinimalIssueComment struct {
 	UpdatedAt         string            `json:"updated_at,omitempty"`
 }
 
+// MinimalFileContentResponse is the trimmed output type for create/update/delete file responses.
+type MinimalFileContentResponse struct {
+	Content *MinimalFileContent `json:"content,omitempty"`
+	Commit  *MinimalFileCommit  `json:"commit,omitempty"`
+}
+
+// MinimalFileContent is the trimmed content portion of a file operation response.
+type MinimalFileContent struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	SHA     string `json:"sha"`
+	Size    int    `json:"size,omitempty"`
+	HTMLURL string `json:"html_url"`
+}
+
+// MinimalFileCommit is the trimmed commit portion of a file operation response.
+type MinimalFileCommit struct {
+	SHA     string               `json:"sha"`
+	Message string               `json:"message,omitempty"`
+	HTMLURL string               `json:"html_url,omitempty"`
+	Author  *MinimalCommitAuthor `json:"author,omitempty"`
+}
+
 // MinimalPullRequest is the trimmed output type for pull request objects to reduce verbosity.
 type MinimalPullRequest struct {
 	Number             int              `json:"number"`
@@ -338,6 +361,42 @@ func convertToMinimalIssueComment(comment *github.IssueComment) MinimalIssueComm
 	return m
 }
 
+func convertToMinimalFileContentResponse(resp *github.RepositoryContentResponse) MinimalFileContentResponse {
+	m := MinimalFileContentResponse{}
+
+	if resp == nil {
+		return m
+	}
+
+	if c := resp.Content; c != nil {
+		m.Content = &MinimalFileContent{
+			Name:    c.GetName(),
+			Path:    c.GetPath(),
+			SHA:     c.GetSHA(),
+			Size:    c.GetSize(),
+			HTMLURL: c.GetHTMLURL(),
+		}
+	}
+
+	m.Commit = &MinimalFileCommit{
+		SHA:     resp.Commit.GetSHA(),
+		Message: resp.Commit.GetMessage(),
+		HTMLURL: resp.Commit.GetHTMLURL(),
+	}
+
+	if author := resp.Commit.Author; author != nil {
+		m.Commit.Author = &MinimalCommitAuthor{
+			Name:  author.GetName(),
+			Email: author.GetEmail(),
+		}
+		if author.Date != nil {
+			m.Commit.Author.Date = author.Date.Format(time.RFC3339)
+		}
+	}
+
+	return m
+}
+
 func convertToMinimalPullRequest(pr *github.PullRequest) MinimalPullRequest {
 	m := MinimalPullRequest{
 		Number:         pr.GetNumber(),
@@ -480,7 +539,7 @@ func convertToMinimalCommit(commit *github.RepositoryCommit, includeDiffs bool) 
 				Email: commit.Commit.Author.GetEmail(),
 			}
 			if commit.Commit.Author.Date != nil {
-				minimalCommit.Commit.Author.Date = commit.Commit.Author.Date.Format("2006-01-02T15:04:05Z")
+				minimalCommit.Commit.Author.Date = commit.Commit.Author.Date.Format(time.RFC3339)
 			}
 		}
 
@@ -490,7 +549,7 @@ func convertToMinimalCommit(commit *github.RepositoryCommit, includeDiffs bool) 
 				Email: commit.Commit.Committer.GetEmail(),
 			}
 			if commit.Commit.Committer.Date != nil {
-				minimalCommit.Commit.Committer.Date = commit.Commit.Committer.Date.Format("2006-01-02T15:04:05Z")
+				minimalCommit.Commit.Committer.Date = commit.Commit.Committer.Date.Format(time.RFC3339)
 			}
 		}
 	}
