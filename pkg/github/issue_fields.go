@@ -136,81 +136,9 @@ func ListIssueFields(t translations.TranslationHelperFunc) inventory.ServerTool 
 				return utils.NewToolResultErrorFromErr("failed to get GitHub GraphQL client", err), nil, nil
 			}
 
-			ctxWithFeatures := ghcontext.WithGraphQLFeatures(ctx, "issue_fields", "repo_issue_fields")
-			var nodes []issueFieldNode
-			if repo != "" {
-				var query issueFieldsRepoQuery
-				vars := map[string]any{
-					"owner": githubv4.String(owner),
-					"name":  githubv4.String(repo),
-				}
-				if err := gqlClient.Query(ctxWithFeatures, &query, vars); err != nil {
-					return ghErrors.NewGitHubGraphQLErrorResponse(ctx, "failed to list issue fields", err), nil, nil
-				}
-				nodes = query.Repository.IssueFields.Nodes
-			} else {
-				var query issueFieldsOrgQuery
-				vars := map[string]any{
-					"login": githubv4.String(owner),
-				}
-				if err := gqlClient.Query(ctxWithFeatures, &query, vars); err != nil {
-					return ghErrors.NewGitHubGraphQLErrorResponse(ctx, "failed to list issue fields", err), nil, nil
-				}
-				nodes = query.Organization.IssueFields.Nodes
-			}
-
-			fields := make([]IssueField, 0, len(nodes))
-			for _, node := range nodes {
-				var f IssueField
-				// Read from the fragment matching __typename; the other fragments are zero-valued.
-				switch string(node.TypeName) {
-				case "IssueFieldSingleSelect":
-					opts := make([]IssueSingleSelectFieldOption, 0, len(node.IssueFieldSingleSelect.Options))
-					for _, o := range node.IssueFieldSingleSelect.Options {
-						opts = append(opts, IssueSingleSelectFieldOption{
-							ID:          fmt.Sprintf("%v", o.ID),
-							Name:        string(o.Name),
-							Description: string(o.Description),
-							Color:       string(o.Color),
-							Priority:    o.Priority,
-						})
-					}
-					f = IssueField{
-						ID:          fmt.Sprintf("%v", node.IssueFieldSingleSelect.ID),
-						Name:        string(node.IssueFieldSingleSelect.Name),
-						Description: string(node.IssueFieldSingleSelect.Description),
-						DataType:    string(node.IssueFieldSingleSelect.DataType),
-						Visibility:  string(node.IssueFieldSingleSelect.Visibility),
-						Options:     opts,
-					}
-				case "IssueFieldText":
-					f = IssueField{
-						ID:          fmt.Sprintf("%v", node.IssueFieldText.ID),
-						Name:        string(node.IssueFieldText.Name),
-						Description: string(node.IssueFieldText.Description),
-						DataType:    string(node.IssueFieldText.DataType),
-						Visibility:  string(node.IssueFieldText.Visibility),
-					}
-				case "IssueFieldNumber":
-					f = IssueField{
-						ID:          fmt.Sprintf("%v", node.IssueFieldNumber.ID),
-						Name:        string(node.IssueFieldNumber.Name),
-						Description: string(node.IssueFieldNumber.Description),
-						DataType:    string(node.IssueFieldNumber.DataType),
-						Visibility:  string(node.IssueFieldNumber.Visibility),
-					}
-				case "IssueFieldDate":
-					f = IssueField{
-						ID:          fmt.Sprintf("%v", node.IssueFieldDate.ID),
-						Name:        string(node.IssueFieldDate.Name),
-						Description: string(node.IssueFieldDate.Description),
-						DataType:    string(node.IssueFieldDate.DataType),
-						Visibility:  string(node.IssueFieldDate.Visibility),
-					}
-				default:
-					continue
-				}
-				fields = append(fields, f)
+			fields, err := fetchIssueFields(ctx, gqlClient, owner, repo)
+			if err != nil {
+				return ghErrors.NewGitHubGraphQLErrorResponse(ctx, "failed to list issue fields", err), nil, nil
 			}
 
 			r, err := json.Marshal(fields)
@@ -220,4 +148,89 @@ func ListIssueFields(t translations.TranslationHelperFunc) inventory.ServerTool 
 
 			return utils.NewToolResultText(string(r)), nil, nil
 		})
+}
+
+// fetchIssueFields returns the issue field definitions for the given owner.
+// If repo is provided, fields are scoped to that repository (inherited from its
+// organization); otherwise fields are returned directly from the organization.
+func fetchIssueFields(ctx context.Context, gqlClient *githubv4.Client, owner, repo string) ([]IssueField, error) {
+	ctxWithFeatures := ghcontext.WithGraphQLFeatures(ctx, "issue_fields", "repo_issue_fields")
+	if repo != "" {
+		var query issueFieldsRepoQuery
+		vars := map[string]any{
+			"owner": githubv4.String(owner),
+			"name":  githubv4.String(repo),
+		}
+		if err := gqlClient.Query(ctxWithFeatures, &query, vars); err != nil {
+			return nil, err
+		}
+		return issueFieldsFromNodes(query.Repository.IssueFields.Nodes), nil
+	}
+
+	var query issueFieldsOrgQuery
+	vars := map[string]any{
+		"login": githubv4.String(owner),
+	}
+	if err := gqlClient.Query(ctxWithFeatures, &query, vars); err != nil {
+		return nil, err
+	}
+	return issueFieldsFromNodes(query.Organization.IssueFields.Nodes), nil
+}
+
+// issueFieldsFromNodes converts GraphQL issue field union nodes into IssueField values.
+// Read from the fragment matching __typename; the other fragments are zero-valued.
+func issueFieldsFromNodes(nodes []issueFieldNode) []IssueField {
+	fields := make([]IssueField, 0, len(nodes))
+	for _, node := range nodes {
+		var f IssueField
+		switch string(node.TypeName) {
+		case "IssueFieldSingleSelect":
+			opts := make([]IssueSingleSelectFieldOption, 0, len(node.IssueFieldSingleSelect.Options))
+			for _, o := range node.IssueFieldSingleSelect.Options {
+				opts = append(opts, IssueSingleSelectFieldOption{
+					ID:          fmt.Sprintf("%v", o.ID),
+					Name:        string(o.Name),
+					Description: string(o.Description),
+					Color:       string(o.Color),
+					Priority:    o.Priority,
+				})
+			}
+			f = IssueField{
+				ID:          fmt.Sprintf("%v", node.IssueFieldSingleSelect.ID),
+				Name:        string(node.IssueFieldSingleSelect.Name),
+				Description: string(node.IssueFieldSingleSelect.Description),
+				DataType:    string(node.IssueFieldSingleSelect.DataType),
+				Visibility:  string(node.IssueFieldSingleSelect.Visibility),
+				Options:     opts,
+			}
+		case "IssueFieldText":
+			f = IssueField{
+				ID:          fmt.Sprintf("%v", node.IssueFieldText.ID),
+				Name:        string(node.IssueFieldText.Name),
+				Description: string(node.IssueFieldText.Description),
+				DataType:    string(node.IssueFieldText.DataType),
+				Visibility:  string(node.IssueFieldText.Visibility),
+			}
+		case "IssueFieldNumber":
+			f = IssueField{
+				ID:          fmt.Sprintf("%v", node.IssueFieldNumber.ID),
+				Name:        string(node.IssueFieldNumber.Name),
+				Description: string(node.IssueFieldNumber.Description),
+				DataType:    string(node.IssueFieldNumber.DataType),
+				Visibility:  string(node.IssueFieldNumber.Visibility),
+			}
+		case "IssueFieldDate":
+			f = IssueField{
+				ID:          fmt.Sprintf("%v", node.IssueFieldDate.ID),
+				Name:        string(node.IssueFieldDate.Name),
+				Description: string(node.IssueFieldDate.Description),
+				DataType:    string(node.IssueFieldDate.DataType),
+				Visibility:  string(node.IssueFieldDate.Visibility),
+			}
+		default:
+			continue
+		}
+		fields = append(fields, f)
+	}
+	return fields
 }
