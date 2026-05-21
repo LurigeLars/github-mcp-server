@@ -360,10 +360,10 @@ Options are:
 			}
 
 			// attachIFC adds the IFC label to a successful tool result when
-			// InsidersMode is enabled. If the visibility lookup fails the
+			// IFC labels are enabled. If the visibility lookup fails the
 			// label is omitted rather than misclassifying the result.
 			attachIFC := func(r *mcp.CallToolResult) *mcp.CallToolResult {
-				if r == nil || r.IsError || !deps.GetFlags(ctx).InsidersMode {
+				if r == nil || r.IsError || !deps.IsFeatureEnabled(ctx, FeatureFlagIFCLabels) {
 					return r
 				}
 				isPrivate, err := FetchRepoIsPrivate(ctx, client, owner, repo)
@@ -1056,7 +1056,7 @@ func SearchIssues(t translations.TranslationHelperFunc) inventory.ServerTool {
 		[]scopes.Scope{scopes.Repo},
 		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			var options []searchOption
-			if deps.GetFlags(ctx).InsidersMode {
+			if deps.IsFeatureEnabled(ctx, FeatureFlagIFCLabels) {
 				options = append(options, withSearchPostProcess(searchIssuesIFCPostProcess(deps)))
 			}
 			result, err := searchIssuesHandler(ctx, deps, args, options...)
@@ -1412,12 +1412,12 @@ Options are:
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 
-			// When insiders mode is enabled and the client supports MCP Apps UI,
+			// When MCP Apps are enabled and the client supports UI,
 			// check if this is a UI form submission. The UI sends _ui_submitted=true
 			// to distinguish form submissions from LLM calls.
 			uiSubmitted, _ := OptionalParam[bool](args, "_ui_submitted")
 
-			if deps.GetFlags(ctx).InsidersMode && clientSupportsUI(ctx, req) && !uiSubmitted {
+			if deps.IsFeatureEnabled(ctx, MCPAppsFeatureFlag) && clientSupportsUI(ctx, req) && !uiSubmitted {
 				if method == "update" {
 					// Skip the UI form when a state change is requested because
 					// the form only handles title/body editing and would lose the
@@ -1954,7 +1954,7 @@ func ListIssues(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 
 			result := MarshalledTextResult(resp)
-			if deps.GetFlags(ctx).InsidersMode {
+			if deps.IsFeatureEnabled(ctx, FeatureFlagIFCLabels) {
 				if result.Meta == nil {
 					result.Meta = mcp.Meta{}
 				}
