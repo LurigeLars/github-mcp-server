@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	ghcontext "github.com/github/github-mcp-server/pkg/context"
 	"github.com/github/github-mcp-server/pkg/github"
@@ -358,12 +359,24 @@ func buildStaticInventory(cfg *ServerConfig, t translations.TranslationHelperFun
 		hostType = utils.HostTypeDotcom
 	}
 	opts := []github.ToolOption{github.WithHost(hostType)}
-
-	if !hasStaticConfig(cfg) {
-		return github.AllTools(t, opts...), github.AllResources(t), github.AllPrompts(t)
+	tools := github.AllTools(t, opts...)
+	filterUnavailable := func(tools []inventory.ServerTool) []inventory.ServerTool {
+		if !cfg.disableDeleteRepository {
+			return tools
+		}
+		return slices.DeleteFunc(tools, func(tool inventory.ServerTool) bool {
+			return tool.Tool.Name == github.DeleteRepositoryToolName
+		})
 	}
 
-	b := github.NewInventory(t, opts...).
+	if !hasStaticConfig(cfg) {
+		return filterUnavailable(tools), github.AllResources(t), github.AllPrompts(t)
+	}
+
+	b := inventory.NewBuilder().
+		SetTools(tools).
+		SetResources(github.AllResources(t)).
+		SetPrompts(github.AllPrompts(t)).
 		WithReadOnly(cfg.ReadOnly).
 		WithToolsets(github.ResolvedEnabledToolsets(cfg.EnabledToolsets, cfg.EnabledTools))
 
@@ -377,13 +390,13 @@ func buildStaticInventory(cfg *ServerConfig, t translations.TranslationHelperFun
 
 	inv, err := b.Build()
 	if err != nil {
-		// Fall back to all tools if there's an error (e.g. unknown tool names).
-		// The error will surface again at per-request time if relevant.
-		return github.AllTools(t, opts...), github.AllResources(t), github.AllPrompts(t)
+		// Invalid static tool names must fail closed rather than widening an
+		// explicit allowlist to every tool.
+		return nil, github.AllResources(t), github.AllPrompts(t)
 	}
 
 	ctx := context.Background()
-	return inv.AvailableTools(ctx), inv.AvailableResourceTemplates(ctx), inv.AvailablePrompts(ctx)
+	return filterUnavailable(inv.AvailableTools(ctx)), inv.AvailableResourceTemplates(ctx), inv.AvailablePrompts(ctx)
 }
 
 // InventoryFiltersForRequest applies filters to the inventory builder
