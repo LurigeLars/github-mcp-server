@@ -672,6 +672,35 @@ func GranularAddPullRequestReviewComment(t translations.TranslationHelperFunc) i
 
 // GranularResolveReviewThread creates a tool to resolve a review thread.
 func GranularResolveReviewThread(t translations.TranslationHelperFunc) inventory.ServerTool {
+	return granularResolveReviewThread(t, false, toolConfig{})
+}
+
+// GranularResolveReviewThreadWithResolutionReason creates the feature-gated variant with resolution reasons.
+func GranularResolveReviewThreadWithResolutionReason(t translations.TranslationHelperFunc, opts ...ToolOption) inventory.ServerTool {
+	cfg := newToolConfig(opts)
+	st := granularResolveReviewThread(t, true, cfg)
+	if cfg.hostType == utils.HostTypeGHES {
+		st.Enabled = func(context.Context) (bool, error) { return false, nil }
+	}
+	return st
+}
+
+func granularResolveReviewThread(t translations.TranslationHelperFunc, withResolutionReason bool, cfg toolConfig) inventory.ServerTool {
+	withResolutionReason = withResolutionReason && cfg.hostType != utils.HostTypeGHES
+
+	properties := map[string]*jsonschema.Schema{
+		"threadID": {
+			Type:        "string",
+			Description: "The node ID of the review thread to resolve (e.g., PRRT_kwDOxxx)",
+		},
+	}
+	if withResolutionReason {
+		properties["resolutionReason"] = &jsonschema.Schema{
+			Type:        "string",
+			Description: "Optional reason for resolving a Copilot code review thread: addressed, wont-fix, or invalid.",
+		}
+	}
+
 	st := NewTool(
 		ToolsetMetadataPullRequests,
 		mcp.Tool{
@@ -684,14 +713,9 @@ func GranularResolveReviewThread(t translations.TranslationHelperFunc) inventory
 				OpenWorldHint:   jsonschema.Ptr(true),
 			},
 			InputSchema: &jsonschema.Schema{
-				Type: "object",
-				Properties: map[string]*jsonschema.Schema{
-					"threadID": {
-						Type:        "string",
-						Description: "The node ID of the review thread to resolve (e.g., PRRT_kwDOxxx)",
-					},
-				},
-				Required: []string{"threadID"},
+				Type:       "object",
+				Properties: properties,
+				Required:   []string{"threadID"},
 			},
 		},
 		scopes.RequireAll(scopes.Repo),
@@ -700,17 +724,36 @@ func GranularResolveReviewThread(t translations.TranslationHelperFunc) inventory
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
+			var resolutionReasonPtr *string
+			if withResolutionReason {
+				resolutionReason, hasResolutionReason, err := OptionalParamOK[string](args, "resolutionReason")
+				if err != nil {
+					return utils.NewToolResultError(err.Error()), nil, nil
+				}
+				if hasResolutionReason {
+					resolutionReasonPtr = &resolutionReason
+				}
+			}
 
 			gqlClient, err := deps.GetGQLClient(ctx)
 			if err != nil {
 				return utils.NewToolResultErrorFromErr("failed to get GitHub GraphQL client", err), nil, nil
 			}
 
-			result, err := ResolveReviewThread(ctx, gqlClient, threadID, true)
+			if !withResolutionReason {
+				result, err := ResolveReviewThread(ctx, gqlClient, threadID, true)
+				return result, nil, err
+			}
+			result, err := ResolveReviewThreadWithReason(ctx, gqlClient, threadID, resolutionReasonPtr, true)
 			return result, nil, err
 		},
 	)
 	st.FeatureFlagEnable = FeatureFlagPullRequestsGranular
+	if withResolutionReason {
+		st.FeatureFlagEnableAll = []string{FeatureFlagThreadResolutionReason}
+	} else if cfg.hostType != utils.HostTypeGHES {
+		st.FeatureFlagDisable = []string{FeatureFlagThreadResolutionReason}
+	}
 	return st
 }
 

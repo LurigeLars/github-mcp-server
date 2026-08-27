@@ -1760,17 +1760,34 @@ func UpdatePullRequestBranch(t translations.TranslationHelperFunc) inventory.Ser
 }
 
 type PullRequestReviewWriteParams struct {
-	Method     string
-	Owner      string
-	Repo       string
-	PullNumber int32
-	Body       string
-	Event      string
-	CommitID   *string
-	ThreadID   string
+	Method           string
+	Owner            string
+	Repo             string
+	PullNumber       int32
+	Body             string
+	Event            string
+	CommitID         *string
+	ThreadID         string
+	ResolutionReason *string
 }
 
 func PullRequestReviewWrite(t translations.TranslationHelperFunc) inventory.ServerTool {
+	return pullRequestReviewWrite(t, false, toolConfig{})
+}
+
+// PullRequestReviewWriteWithResolutionReason creates the feature-gated review write variant with resolution reasons.
+func PullRequestReviewWriteWithResolutionReason(t translations.TranslationHelperFunc, opts ...ToolOption) inventory.ServerTool {
+	cfg := newToolConfig(opts)
+	st := pullRequestReviewWrite(t, true, cfg)
+	if cfg.hostType == utils.HostTypeGHES {
+		st.Enabled = func(context.Context) (bool, error) { return false, nil }
+	}
+	return st
+}
+
+func pullRequestReviewWrite(t translations.TranslationHelperFunc, withResolutionReason bool, cfg toolConfig) inventory.ServerTool {
+	withResolutionReason = withResolutionReason && cfg.hostType != utils.HostTypeGHES
+
 	schema := &jsonschema.Schema{
 		Type: "object",
 		Properties: map[string]*jsonschema.Schema{
@@ -1813,6 +1830,12 @@ func PullRequestReviewWrite(t translations.TranslationHelperFunc) inventory.Serv
 			},
 		},
 		Required: []string{"method", "owner", "repo", "pullNumber"},
+	}
+	if withResolutionReason {
+		schema.Properties["resolutionReason"] = &jsonschema.Schema{
+			Type:        "string",
+			Description: "Optional reason for resolving a Copilot code review thread: addressed, wont-fix, or invalid.",
+		}
 	}
 
 	st := NewTool(
@@ -1858,7 +1881,11 @@ Available methods:
 				result, err := DeletePendingPullRequestReview(ctx, client, params)
 				return result, nil, err
 			case "resolve_thread":
-				result, err := ResolveReviewThread(ctx, client, params.ThreadID, true)
+				if !withResolutionReason {
+					result, err := ResolveReviewThread(ctx, client, params.ThreadID, true)
+					return result, nil, err
+				}
+				result, err := ResolveReviewThreadWithReason(ctx, client, params.ThreadID, params.ResolutionReason, true)
 				return result, nil, err
 			case "unresolve_thread":
 				result, err := ResolveReviewThread(ctx, client, params.ThreadID, false)
@@ -1867,7 +1894,15 @@ Available methods:
 				return utils.NewToolResultError(fmt.Sprintf("unknown method: %s", params.Method)), nil, nil
 			}
 		})
-	st.FeatureFlagDisable = []string{FeatureFlagPullRequestsGranular}
+	if withResolutionReason {
+		st.FeatureFlagEnable = FeatureFlagThreadResolutionReason
+		st.FeatureFlagDisable = []string{FeatureFlagPullRequestsGranular}
+	} else {
+		st.FeatureFlagDisable = []string{FeatureFlagPullRequestsGranular}
+		if cfg.hostType != utils.HostTypeGHES {
+			st.FeatureFlagDisable = append(st.FeatureFlagDisable, FeatureFlagThreadResolutionReason)
+		}
+	}
 	return st
 }
 
@@ -2094,8 +2129,19 @@ func DeletePendingPullRequestReview(ctx context.Context, client *githubv4.Client
 	return utils.NewToolResultText("pending pull request review successfully deleted"), nil
 }
 
+// ResolveReviewThreadInput is the GraphQL input for resolving a review thread.
+type ResolveReviewThreadInput struct {
+	ThreadID         githubv4.ID      `json:"threadId"`
+	ResolutionReason *githubv4.String `json:"resolutionReason,omitempty"`
+}
+
 // ResolveReviewThread resolves or unresolves a PR review thread using GraphQL mutations.
 func ResolveReviewThread(ctx context.Context, client *githubv4.Client, threadID string, resolve bool) (*mcp.CallToolResult, error) {
+	return ResolveReviewThreadWithReason(ctx, client, threadID, nil, resolve)
+}
+
+// ResolveReviewThreadWithReason resolves or unresolves a PR review thread with an optional resolution reason.
+func ResolveReviewThreadWithReason(ctx context.Context, client *githubv4.Client, threadID string, resolutionReason *string, resolve bool) (*mcp.CallToolResult, error) {
 	if threadID == "" {
 		return utils.NewToolResultError("threadId is required for resolve_thread and unresolve_thread methods"), nil
 	}
@@ -2110,8 +2156,9 @@ func ResolveReviewThread(ctx context.Context, client *githubv4.Client, threadID 
 			} `graphql:"resolveReviewThread(input: $input)"`
 		}
 
-		input := githubv4.ResolveReviewThreadInput{
-			ThreadID: githubv4.ID(threadID),
+		input := ResolveReviewThreadInput{
+			ThreadID:         githubv4.ID(threadID),
+			ResolutionReason: newGQLStringlikePtr[githubv4.String](resolutionReason),
 		}
 
 		if err := client.Mutate(ctx, &mutation, input, nil); err != nil {
