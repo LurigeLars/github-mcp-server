@@ -21,6 +21,7 @@ func TestOAuthScopeCatalog(t *testing.T) {
 
 func TestScopeChecks(t *testing.T) {
 	assert.True(t, HasAll([]string{"repo", "workflow"}, Repo, Workflow))
+	assert.True(t, HasAll([]string{"repo"}, PublicRepo))
 	assert.False(t, HasAll([]string{"repo"}, Repo, Workflow))
 	assert.True(t, HasAll([]string{"admin:org"}, ReadOrg))
 	assert.True(t, HasAllScopeNames([]string{"admin:org"}, []string{"read:org"}))
