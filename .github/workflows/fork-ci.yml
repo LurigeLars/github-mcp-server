@@ -1,0 +1,57 @@
+name: Fork CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fork-ci:
+    name: fork-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Build UI
+        uses: ./.github/actions/build-ui
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify module graph is tidy
+        run: go mod tidy -diff
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf 'Files need gofmt:\n%s\n' "$files"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        shell: bash
+        run: script/test
+
+      - name: Build server
+        run: go build -v ./cmd/github-mcp-server
