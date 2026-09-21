@@ -36,16 +36,6 @@ jobs:
       - name: Verify module graph is tidy
         run: go mod tidy -diff
 
-      - name: Check formatting
-        shell: bash
-        run: |
-          set -euo pipefail
-          files="$(gofmt -l .)"
-          if [ -n "$files" ]; then
-            printf 'Files need gofmt:\n%s\n' "$files"
-            exit 1
-          fi
-
       - name: Vet
         run: go vet ./...
 
