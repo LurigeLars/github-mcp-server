@@ -30,7 +30,9 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest-xl
+    # Fork compatibility: larger GitHub-hosted runners such as ubuntu-latest-xl
+    # are not available to personal-account repositories.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -67,7 +69,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Extract metadata (tags, labels) for Docker
-      # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -83,7 +84,6 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
             type=edge
-            # Custom rule to prevent pre-releases from getting latest tag
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
 
       - name: Go Build Cache for Docker
@@ -103,7 +103,6 @@ jobs:
             }
 
       # Build and push Docker image with Buildx (don't push on PR)
-      # https://github.com/docker/build-push-action
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -122,17 +121,9 @@ jobs:
             oauth_client_secret=${{ secrets.OAUTH_CLIENT_SECRET }}
 
       # Sign the resulting Docker image digest except on PRs.
-      # This will only write to the public Rekor transparency log when the Docker
-      # repository is public to avoid leaking data.  If you would like to publish
-      # transparency data even for private images, pass --force to cosign below.
-      # https://github.com/sigstore/cosign
       - name: Sign the published Docker image
         if: ${{ github.event_name != 'pull_request' }}
         env:
-          # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
-        # This step uses the identity token to provision an ephemeral certificate
-        # against the sigstore community Fulcio instance.
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
-        
