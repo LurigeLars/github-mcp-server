@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+# Vendored upstream source can contain scanner/test fixtures that resemble credentials.
+# Keep the exemption path-scoped so first-party source remains fully scanned.
+[[allowlists]]
+description = "Vendored third-party test fixtures"
+paths = ['''^third-party/''']
