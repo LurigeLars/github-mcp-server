@@ -8,13 +8,12 @@ This is a maintained fork of [github/github-mcp-server](https://github.com/githu
 
 Fork-specific changes include:
 
-- a fork-safe CI gate so validation can run independently of workflows intended only for GitHub's upstream repository;
-- fork-specific Advanced CodeQL security-and-quality scanning and Dependabot version-update coverage;
-- additional hardening around UI path handling and pull-request workflow boundaries; and
-- fork-maintained runtime/build dependency updates needed by the local deployment.
+- A fork-safe CI gate so validation can run independently of workflows intended only for GitHub's upstream repository.
+- Fork-specific Advanced CodeQL security-and-quality scanning and Dependabot version-update coverage.
+- Additional hardening around UI path handling and pull-request workflow boundaries.
+- Fork-maintained runtime and build dependency updates needed by the local deployment.
 
 Unless called out here, MCP tools and behavior should be treated as upstream GitHub MCP Server functionality.
-
 
 The GitHub MCP Server connects AI tools directly to GitHub's platform. This gives AI agents, assistants, and chatbots the ability to read repositories and code files, manage issues and PRs, analyze code, and automate workflows. All through natural language interactions.
 
