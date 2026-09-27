@@ -81,6 +81,20 @@ function Wait-GatewayHealthy {
   throw 'GitHub gateway did not become healthy within 30 seconds.'
 }
 
+function Start-GatewayForSecretImport {
+  & docker @Compose up -d github-mcp
+  if ($LASTEXITCODE -ne 0) { throw 'GitHub MCP backend start failed.' }
+
+  # Always recreate the gateway before injecting credentials. The gateway
+  # consumes and unlinks the tmpfs files only during process startup, so
+  # injecting into an already-running gateway would leave plaintext files behind.
+  & docker @Compose up -d --force-recreate github-gateway
+  if ($LASTEXITCODE -ne 0) { throw 'GitHub gateway recreate failed.' }
+
+  Import-RuntimeSecrets
+  Wait-GatewayHealthy
+}
+
 Wait-Docker $DockerWaitSeconds
 
 switch ($Action) {
@@ -89,16 +103,15 @@ switch ($Action) {
     if (-not (Test-Path -LiteralPath $PatPath -PathType Leaf)) {
       throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
     }
-    & docker @Compose up -d
-    if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed.' }
-    Import-RuntimeSecrets
-    Wait-GatewayHealthy
+    Start-GatewayForSecretImport
     Write-Host 'GITHUB_MCP_UP'
   }
   'import-secrets' {
     Assert-NoLegacyPlaintextSecrets
-    Import-RuntimeSecrets
-    Wait-GatewayHealthy
+    if (-not (Test-Path -LiteralPath $PatPath -PathType Leaf)) {
+      throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
+    }
+    Start-GatewayForSecretImport
     Write-Host 'GITHUB_MCP_RUNTIME_SECRETS_IMPORTED'
   }
   'down' {

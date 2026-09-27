@@ -7,7 +7,8 @@ This directory is the versioned source for the Windows/Docker deployment used to
 - The GitHub PAT is stored on Windows as `%LOCALAPPDATA%\GitHubMCP\secrets\github_pat.dpapi` using DPAPI CurrentUser.
 - The optional secret-path fallback secret is stored as `gateway_secret.dpapi` when present.
 - `github-mcp.ps1 up` decrypts the required values in the current Windows user process and streams them over stdin into `/run/github-mcp-secrets`, a container tmpfs owned by the unprivileged `node` user.
-- The gateway consumes each runtime secret once at startup and unlinks the tmpfs file. The PAT is not configured in Docker `.Config.Env`, Compose env files, command-line arguments, Git, or the container writable layer.
+- Before each runtime-secret import, the wrapper force-recreates the gateway so the new process consumes and unlinks the tmpfs files during startup. Re-running `up` is therefore safe and deterministic.
+- The PAT is not configured in Docker `.Config.Env`, Compose env files, command-line arguments, Git, or the container writable layer.
 - Plaintext necessarily exists transiently in the Windows PowerShell process, Docker exec stdin and Node process memory. The PAT remains in Node process memory while the gateway is running because it is required to authorize upstream GitHub requests. DPAPI protects at-rest host storage; it does not eliminate runtime plaintext.
 
 ## Existing-install migration
