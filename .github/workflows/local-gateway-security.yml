@@ -67,8 +67,40 @@ jobs:
           done
 
           docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke             sh -c 'test ! -e /run/github-mcp-secrets/github_pat'
-          if docker diff "$id" | grep -Eq 'github_pat|github-mcp-secrets'; then
-            echo "secret path appeared in container writable-layer diff" >&2
+          if docker diff "$id" | grep -Eq '/run/github-mcp-secrets/(github_pat|gateway_secret)            exit 1
+          fi
+          docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke             node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
+  windows-dpapi:
+    name: local-gateway-windows-dpapi
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+      - name: Parse all local gateway PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem ./deploy/local-gateway -Filter *.ps1 -Recurse | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              Write-Error "$($_.FullName): $($errors -join '; ')"
+            }
+          }
+          if ($failed) { exit 1 }
+      - name: Exercise Windows DPAPI CurrentUser round trip
+        shell: pwsh
+        run: ./deploy/local-gateway/test/dpapi.test.ps1
+; then
+            echo "runtime secret file appeared in container writable-layer diff" >&2
             exit 1
           fi
           docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke             node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
