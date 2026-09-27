@@ -32,7 +32,7 @@ jobs:
           node --check deploy/local-gateway/public/policy.mjs
       - name: Run secret-boundary tests
         run: node --test deploy/local-gateway/test/static-security.test.mjs
-      - name: Exercise isolated tmpfs runtime injection
+      - name: Exercise isolated stdin-to-tmpfs runtime injection
         env:
           GITHUB_MCP_DEPLOY_ROOT: ${{ github.workspace }}/deploy/local-gateway
           GITHUB_PAT_RUNTIME: github_pat_test_only_runtime_secret_12345678901234567890
@@ -49,7 +49,6 @@ jobs:
           docker compose -p "$project" -f "$compose" up -d --force-recreate github-gateway-smoke
           id="$(docker compose -p "$project" -f "$compose" ps -q github-gateway-smoke)"
           test -n "$id"
-          sleep 1
 
           envs="$(docker inspect "$id" --format '{{range .Config.Env}}{{println .}}{{end}}')"
           if grep -Eq '^(GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_PAT_RUNTIME|GATEWAY_SECRET)=' <<<"$envs"; then
@@ -57,12 +56,22 @@ jobs:
             exit 1
           fi
 
-          docker exec "$id" sh -eu -c 'test ! -e /run/github-mcp-secrets/github_pat'
+          printf '%s' "$GITHUB_PAT_RUNTIME" |
+            docker compose -p "$project" -f "$compose" exec -T --user 1000:1000 github-gateway-smoke               sh -c 'umask 077; cat > /run/github-mcp-secrets/github_pat'
+
+          for _ in $(seq 1 40); do
+            if docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke               node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              break
+            fi
+            sleep 0.25
+          done
+
+          docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke             sh -c 'test ! -e /run/github-mcp-secrets/github_pat'
           if docker diff "$id" | grep -Eq 'github_pat|github-mcp-secrets'; then
             echo "secret path appeared in container writable-layer diff" >&2
             exit 1
           fi
-          docker exec "$id" node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+          docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke             node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
   windows-dpapi:
     name: local-gateway-windows-dpapi

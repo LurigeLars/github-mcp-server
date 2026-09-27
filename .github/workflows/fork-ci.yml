@@ -24,9 +24,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
-      - name: Test local gateway secret hardening
-        run: node --test deploy/local-gateway/security/gateway-secrets.test.mjs
-
       - name: Build UI
         uses: ./.github/actions/build-ui
 

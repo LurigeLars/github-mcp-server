@@ -1,10 +1,10 @@
 // Public Cloudflare gatekeeper for the official GitHub MCP HTTP server.
-// GitHub credentials are read from a runtime tmpfs file, never container env.
+// GitHub credentials are injected into runtime tmpfs and consumed at startup.
 // Node standard library only.
 
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import {
   checkRequestPolicy,
   secretResultIdsFromRequest,
@@ -15,20 +15,23 @@ import {
 const GITHUB_PAT_FILE = process.env.GITHUB_PAT_FILE ?? '/run/github-mcp-secrets/github_pat';
 const GATEWAY_SECRET_FILE = process.env.GATEWAY_SECRET_FILE ?? '/run/github-mcp-secrets/gateway_secret';
 
-function readRuntimeSecret(path, label, minLength) {
+function consumeRuntimeSecret(path, label, minLength) {
+  let value;
   try {
     const raw = readFileSync(path, 'utf8');
     if (raw.length > 4096) throw new Error('oversized');
-    const value = raw.trim();
+    value = raw.trim();
     if (value.length < minLength || /[\r\n]/.test(value)) throw new Error('invalid');
-    return value;
+    unlinkSync(path);
   } catch {
-    console.error(`${label} runtime secret missing/invalid; refusing request`);
+    console.error(`${label} runtime secret missing/invalid; refusing to start`);
     return null;
   }
+  return value;
 }
 
-if (!readRuntimeSecret(GITHUB_PAT_FILE, 'GitHub PAT', 20)) process.exit(1);
+const TOKEN = consumeRuntimeSecret(GITHUB_PAT_FILE, 'GitHub PAT', 20);
+if (!TOKEN) process.exit(1);
 
 const UPSTREAM_HOST = process.env.UPSTREAM_HOST ?? 'github-mcp';
 const UPSTREAM_PORT = Number(process.env.UPSTREAM_PORT ?? 8082);
@@ -53,11 +56,12 @@ if (ACCESS_ENABLED && !ACCESS_TEAM_DOMAIN) {
 const ACCESS_ISSUER = ACCESS_ENABLED ? `https://${ACCESS_TEAM_DOMAIN}` : '';
 
 const SECRET_FALLBACK = process.env.ALLOW_SECRET_PATH === '1';
+const SECRET = SECRET_FALLBACK
+  ? consumeRuntimeSecret(GATEWAY_SECRET_FILE, 'Gateway fallback', 32)
+  : '';
+if (SECRET_FALLBACK && !SECRET) process.exit(1);
 if (!ACCESS_ENABLED && !SECRET_FALLBACK) {
   console.error('Cloudflare Access is not configured and secret-path fallback is disabled; refusing to start');
-  process.exit(1);
-}
-if (SECRET_FALLBACK && !readRuntimeSecret(GATEWAY_SECRET_FILE, 'Gateway fallback', 32)) {
   process.exit(1);
 }
 
@@ -104,12 +108,8 @@ async function verifyAccessJwt(token) {
     const aud = [claims.aud].flat();
     if (!aud.includes(ACCESS_AUD)) return { ok: false, reason: 'wrong audience' };
     if (claims.iss !== ACCESS_ISSUER) return { ok: false, reason: 'wrong issuer' };
-    if (typeof claims.exp !== 'number' || claims.exp < now - 30) {
-      return { ok: false, reason: 'expired' };
-    }
-    if (typeof claims.nbf === 'number' && claims.nbf > now + 30) {
-      return { ok: false, reason: 'not yet valid' };
-    }
+    if (typeof claims.exp !== 'number' || claims.exp < now - 30) return { ok: false, reason: 'expired' };
+    if (typeof claims.nbf === 'number' && claims.nbf > now + 30) return { ok: false, reason: 'not yet valid' };
 
     const email = String(claims.email ?? '').toLowerCase();
     if (ACCESS_EMAILS.size && !ACCESS_EMAILS.has(email)) {
@@ -126,12 +126,9 @@ function pathAllowed(url) {
   if (ACCESS_ENABLED && path === '/mcp') return true;
   if (!SECRET_FALLBACK) return false;
 
-  const secret = readRuntimeSecret(GATEWAY_SECRET_FILE, 'Gateway fallback', 32);
-  if (!secret) return false;
-  const expected = Buffer.from(`/${secret}/mcp`);
+  const expected = Buffer.from(`/${SECRET}/mcp`);
   const actual = Buffer.from(path);
-  return actual.length === expected.length &&
-    crypto.timingSafeEqual(actual, expected);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 const windows = new Map();
@@ -146,9 +143,7 @@ function rateLimited(key) {
 }
 setInterval(() => {
   const now = Date.now();
-  for (const [key, w] of windows) {
-    if (now - w.start >= 60_000) windows.delete(key);
-  }
+  for (const [key, w] of windows) if (now - w.start >= 60_000) windows.delete(key);
 }, 60_000).unref();
 
 function clientIp(req) {
@@ -161,9 +156,6 @@ function send(res, status, body = '') {
 }
 
 function upstreamHeaders(req, bodyLength) {
-  const token = readRuntimeSecret(GITHUB_PAT_FILE, 'GitHub PAT', 20);
-  if (!token) return null;
-
   const headers = { ...req.headers };
   for (const name of [
     'authorization',
@@ -177,12 +169,10 @@ function upstreamHeaders(req, bodyLength) {
     'x-mcp-insiders',
     'x-mcp-features',
     'content-length',
-  ]) {
-    delete headers[name];
-  }
+  ]) delete headers[name];
 
   headers.host = `${UPSTREAM_HOST}:${UPSTREAM_PORT}`;
-  headers.authorization = `Bearer ${token}`;
+  headers.authorization = `Bearer ${TOKEN}`;
   if (bodyLength !== null) headers['content-length'] = String(bodyLength);
   return headers;
 }
@@ -192,15 +182,10 @@ function rewriteUpstreamRequest(parsed, originalBody) {
   let changed = false;
 
   const rewritten = messages.map(message => {
-    if (message?.method !== 'tools/call' ||
-        message?.params?.name !== 'label_write') {
-      return message;
-    }
+    if (message?.method !== 'tools/call' || message?.params?.name !== 'label_write') return message;
 
     const args = message?.params?.arguments;
-    if (!args ||
-        typeof args !== 'object' ||
-        Array.isArray(args) ||
+    if (!args || typeof args !== 'object' || Array.isArray(args) ||
         !Object.prototype.hasOwnProperty.call(args, 'label_description')) {
       return message;
     }
@@ -219,16 +204,9 @@ function rewriteUpstreamRequest(parsed, originalBody) {
 
 function forward(req, res, body, secretIds) {
   const headers = upstreamHeaders(req, body ? body.length : null);
-  if (!headers) return send(res, 503, 'GitHub credential unavailable');
 
   const up = http.request(
-    {
-      host: UPSTREAM_HOST,
-      port: UPSTREAM_PORT,
-      method: req.method,
-      path: UPSTREAM_PATH,
-      headers,
-    },
+    { host: UPSTREAM_HOST, port: UPSTREAM_PORT, method: req.method, path: UPSTREAM_PATH, headers },
     upRes => {
       const responseHeaders = { ...upRes.headers };
       delete responseHeaders['content-length'];
@@ -242,13 +220,9 @@ function forward(req, res, body, secretIds) {
           pending += chunk;
           const lines = pending.split('\n');
           pending = lines.pop();
-          if (lines.length) {
-            res.write(lines.map(line => rewriteSseLine(line, secretIds)).join('\n') + '\n');
-          }
+          if (lines.length) res.write(lines.map(line => rewriteSseLine(line, secretIds)).join('\n') + '\n');
         });
-        upRes.on('end', () => {
-          res.end(pending ? rewriteSseLine(pending, secretIds) : undefined);
-        });
+        upRes.on('end', () => res.end(pending ? rewriteSseLine(pending, secretIds) : undefined));
         return;
       }
 
@@ -257,7 +231,6 @@ function forward(req, res, body, secretIds) {
       upRes.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
         const out = Buffer.from(rewriteJsonText(raw, secretIds));
-
         delete responseHeaders['transfer-encoding'];
         responseHeaders['content-length'] = String(out.length);
         res.writeHead(upRes.statusCode ?? 502, responseHeaders);
@@ -280,9 +253,7 @@ function forward(req, res, body, secretIds) {
 }
 
 http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/healthz') {
-    return send(res, 200, 'ok');
-  }
+  if (req.method === 'GET' && req.url === '/healthz') return send(res, 200, 'ok');
   if (!pathAllowed(req.url)) return send(res, 404);
 
   let identity = clientIp(req);
@@ -296,14 +267,8 @@ http.createServer(async (req, res) => {
   }
 
   if (rateLimited(identity)) return send(res, 429, 'rate limited');
-
-  if (!['POST', 'GET', 'DELETE'].includes(req.method ?? '')) {
-    return send(res, 405, 'method not allowed');
-  }
-
-  if (req.method !== 'POST') {
-    return forward(req, res, null, new Set());
-  }
+  if (!['POST', 'GET', 'DELETE'].includes(req.method ?? '')) return send(res, 405, 'method not allowed');
+  if (req.method !== 'POST') return forward(req, res, null, new Set());
 
   const chunks = [];
   let size = 0;
