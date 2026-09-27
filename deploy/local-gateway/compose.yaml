@@ -1,0 +1,85 @@
+services:
+  github-mcp:
+    image: ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6
+    command:
+      - http
+      - --port=8082
+      - --listen-host=0.0.0.0
+      - --base-url=https://${GITHUB_MCP_PUBLIC_HOST}
+      - --base-path=/mcp
+    env_file:
+      - ./config/github.env
+    networks:
+      - github_backend
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+
+  github-gateway:
+    image: node:26.9.0-alpine
+    command:
+      - sh
+      - -c
+      - >-
+          while [ ! -s /run/github-mcp-secrets/github_pat ]; do sleep 0.05; done;
+          if [ "$${ALLOW_SECRET_PATH:-0}" = "1" ]; then
+            while [ ! -s /run/github-mcp-secrets/gateway_secret ]; do sleep 0.05; done;
+          fi;
+          exec node /app/gateway.mjs
+    user: node
+    env_file:
+      - ./config/gateway.env
+    environment:
+      UPSTREAM_HOST: github-mcp
+      UPSTREAM_PORT: "8082"
+      UPSTREAM_PATH: "/"
+      PORT: "8080"
+      RATE_PER_MIN: "120"
+      MAX_BODY_BYTES: "5242880"
+      GITHUB_PAT_FILE: /run/github-mcp-secrets/github_pat
+      GATEWAY_SECRET_FILE: /run/github-mcp-secrets/gateway_secret
+    volumes:
+      - ./public:/app:ro
+    networks:
+      github_backend:
+      edge:
+        aliases:
+          - github-gateway
+    depends_on:
+      - github-mcp
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/github-mcp-secrets:rw,nosuid,nodev,noexec,size=64k,uid=1000,gid=1000,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    # Runtime credentials live only in process memory after startup. Do not let
+    # Docker auto-restart this service without the host wrapper re-injecting them.
+    restart: "no"
+
+networks:
+  github_backend:
+    driver: bridge
+  edge:
+    external: true
+    name: ${MCP_EDGE_NETWORK}
