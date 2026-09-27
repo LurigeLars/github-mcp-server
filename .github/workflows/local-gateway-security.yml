@@ -32,6 +32,37 @@ jobs:
           node --check deploy/local-gateway/public/policy.mjs
       - name: Run secret-boundary tests
         run: node --test deploy/local-gateway/test/static-security.test.mjs
+      - name: Exercise isolated tmpfs runtime injection
+        env:
+          GITHUB_MCP_DEPLOY_ROOT: ${{ github.workspace }}/deploy/local-gateway
+          GITHUB_PAT_RUNTIME: github_pat_test_only_runtime_secret_12345678901234567890
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=github-mcp-secret-smoke-ci
+          compose=deploy/local-gateway/test/runtime-secret-smoke.compose.yaml
+          cleanup() {
+            docker compose -p "$project" -f "$compose" down -v >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker compose -p "$project" -f "$compose" up -d --force-recreate github-gateway-smoke
+          id="$(docker compose -p "$project" -f "$compose" ps -q github-gateway-smoke)"
+          test -n "$id"
+          sleep 1
+
+          envs="$(docker inspect "$id" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+          if grep -Eq '^(GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_PAT_RUNTIME|GATEWAY_SECRET)=' <<<"$envs"; then
+            echo "forbidden secret key persisted in Docker Config.Env" >&2
+            exit 1
+          fi
+
+          docker exec "$id" sh -eu -c 'test ! -e /run/github-mcp-secrets/github_pat'
+          if docker diff "$id" | grep -Eq 'github_pat|github-mcp-secrets'; then
+            echo "secret path appeared in container writable-layer diff" >&2
+            exit 1
+          fi
+          docker exec "$id" node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
   windows-dpapi:
     name: local-gateway-windows-dpapi
