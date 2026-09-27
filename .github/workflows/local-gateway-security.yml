@@ -1,0 +1,45 @@
+name: Local Gateway Security
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "deploy/local-gateway/**"
+      - ".github/workflows/local-gateway-security.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/local-gateway/**"
+      - ".github/workflows/local-gateway-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: local-gateway-static
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+      - name: Check gateway syntax
+        run: |
+          node --check deploy/local-gateway/public/gateway.mjs
+          node --check deploy/local-gateway/public/policy.mjs
+      - name: Run secret-boundary tests
+        run: node --test deploy/local-gateway/test/static-security.test.mjs
+
+  windows-dpapi:
+    name: local-gateway-windows-dpapi
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+      - name: Exercise Windows DPAPI CurrentUser round trip
+        shell: pwsh
+        run: ./deploy/local-gateway/test/dpapi.test.ps1
