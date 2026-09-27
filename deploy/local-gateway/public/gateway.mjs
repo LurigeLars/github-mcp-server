@@ -240,7 +240,7 @@ function forward(req, res, body, secretIds) {
   );
 
   up.on('error', err => {
-    console.warn(`upstream error: ${err.code ?? err.message}`);
+    console.warn('upstream unavailable');
     if (!res.headersSent) send(res, 502, 'upstream unavailable');
     else res.destroy();
   });
@@ -260,7 +260,7 @@ http.createServer(async (req, res) => {
   if (ACCESS_ENABLED) {
     const verified = await verifyAccessJwt(req.headers['cf-access-jwt-assertion']);
     if (!verified.ok) {
-      console.warn(`access denied from ${identity}: ${verified.reason}`);
+      console.warn('access denied');
       return send(res, 403, 'forbidden');
     }
     if (verified.email) identity = verified.email;
@@ -299,7 +299,7 @@ http.createServer(async (req, res) => {
 
     const violation = checkRequestPolicy(parsed);
     if (violation) {
-      console.warn(new Date().toISOString() + ' ' + identity + ' policy-block: ' + violation.message);
+      console.warn(new Date().toISOString() + ' request blocked by local GitHub gateway policy');
       return send(res, 403, 'blocked by local GitHub gateway policy: ' + violation.message);
     }
 
@@ -307,7 +307,7 @@ http.createServer(async (req, res) => {
     const methods = [parsed].flat().map(m =>
       m?.method === 'tools/call' ? `call:${m?.params?.name}` : m?.method
     );
-    console.log(`${new Date().toISOString()} ${identity} ${methods.join(',')}`);
+    console.log(`${new Date().toISOString()} authenticated MCP request`);
 
     const upstreamBody = rewriteUpstreamRequest(parsed, body);
     forward(req, res, upstreamBody, secretIds);
