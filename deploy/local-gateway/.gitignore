@@ -1,0 +1,5 @@
+.env
+config/gateway.env
+config/github.env
+secrets.env
+*.dpapi
