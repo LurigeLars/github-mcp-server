@@ -1,5 +1,5 @@
 # Add this BEFORE the final `- service: http_status:404` entry
 # in the EXISTING cloudflared config used by firecrawl-local.
 
-  - hostname: github-mcp.lurigelars.com
+  - hostname: github-mcp.example.com
     service: http://github-gateway:8080
