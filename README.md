@@ -13,6 +13,10 @@ Fork-specific changes include:
 - Additional hardening around UI path handling and pull-request workflow boundaries.
 - Fork-maintained runtime and build dependency updates needed by the local deployment.
 
+The deployment this fork was hardened for -- one pinned container serving local agents over
+stdio and cloud chats through Cloudflare Access, with one policy and one token -- is documented
+in [docs/local-and-cloud-deployment.md](docs/local-and-cloud-deployment.md).
+
 Unless called out here, MCP tools and behavior should be treated as upstream GitHub MCP Server functionality.
 
 The GitHub MCP Server connects AI tools directly to GitHub's platform. This gives AI agents, assistants, and chatbots the ability to read repositories and code files, manage issues and PRs, analyze code, and automate workflows. All through natural language interactions.
