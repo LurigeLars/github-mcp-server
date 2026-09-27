@@ -73,7 +73,9 @@ services:
       timeout: 3s
       retries: 6
       start_period: 10s
-    restart: unless-stopped
+    # Runtime credentials live only in process memory after startup. Do not let
+    # Docker auto-restart this service without the host wrapper re-injecting them.
+    restart: "no"
 
 networks:
   github_backend:
