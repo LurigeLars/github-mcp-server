@@ -15,6 +15,6 @@ This directory is the versioned source for the Windows/Docker deployment used to
 1. Copy this deployment source over the existing `C:\ClaudeCode\github-mcp-local` non-secret files, preserving `.env`, `config\github.env`, and local Cloudflare settings.
 2. Run `scripts\configure_secrets.ps1`. It migrates the existing plaintext PAT and optional gateway fallback secret to DPAPI, verifies decryption, copies Access configuration into `config\gateway.env`, and only then removes the legacy plaintext entries.
 3. Start with `github-mcp.ps1 up`, then run `github-mcp.ps1 test`.
-4. Install `scripts\install-startup-task.ps1` so the current Windows user re-injects runtime secrets after logon/Docker restart.
+4. Install `scripts\install-startup-task.ps1` so the current Windows user starts the secure wrapper at logon while Docker Desktop comes up.
 
-Do not use `docker compose up` directly after this migration: the gateway intentionally waits for the host wrapper to inject its tmpfs credential.
+The gateway has Docker auto-restart disabled because a container restart cannot reconstruct a DPAPI credential by itself. After manually restarting Docker Desktop during an existing Windows session, rerun `github-mcp.ps1 up` (or the installed task). Do not use `docker compose up` directly after this migration: the gateway intentionally waits for the host wrapper to inject its tmpfs credential.
