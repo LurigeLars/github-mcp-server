@@ -1,17 +1,10 @@
 // Public Cloudflare gatekeeper for the official GitHub MCP HTTP server.
-// Responsibilities:
-// - require Cloudflare Access JWT;
-// - strip client credentials and client-side MCP configuration headers;
-// - inject the local GitHub credential into Authorization;
-// - redact literal Secret Scanning secret values from MCP results;
-// - rate-limit and cap request bodies.
-// The GitHub credential is read once from tmpfs, unlinked immediately, and never
-// supplied through the container's persistent environment or writable layer.
+// GitHub credentials are read from a runtime tmpfs file, never container env.
 // Node standard library only.
 
-import fs from 'node:fs';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   checkRequestPolicy,
   secretResultIdsFromRequest,
@@ -19,34 +12,23 @@ import {
   rewriteSseLine,
 } from './policy.mjs';
 
-const PAT_PATH = '/run/github-mcp-secrets/github_pat';
+const GITHUB_PAT_FILE = process.env.GITHUB_PAT_FILE ?? '/run/github-mcp-secrets/github_pat';
+const GATEWAY_SECRET_FILE = process.env.GATEWAY_SECRET_FILE ?? '/run/github-mcp-secrets/gateway_secret';
 
-function readRuntimeSecret(path, minLength) {
-  let value = '';
+function readRuntimeSecret(path, label, minLength) {
   try {
-    value = fs.readFileSync(path, 'utf8').trim();
+    const raw = readFileSync(path, 'utf8');
+    if (raw.length > 4096) throw new Error('oversized');
+    const value = raw.trim();
+    if (value.length < minLength || /[\r\n]/.test(value)) throw new Error('invalid');
+    return value;
   } catch {
-    console.error('runtime GitHub credential missing; refusing to start');
-    process.exit(1);
-  } finally {
-    try {
-      fs.unlinkSync(path);
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        console.error('could not remove runtime credential file; refusing to start');
-        process.exit(1);
-      }
-    }
+    console.error(`${label} runtime secret missing/invalid; refusing request`);
+    return null;
   }
-
-  if (value.length < minLength) {
-    console.error('runtime GitHub credential invalid; refusing to start');
-    process.exit(1);
-  }
-  return value;
 }
 
-const TOKEN = readRuntimeSecret(PAT_PATH, 20);
+if (!readRuntimeSecret(GITHUB_PAT_FILE, 'GitHub PAT', 20)) process.exit(1);
 
 const UPSTREAM_HOST = process.env.UPSTREAM_HOST ?? 'github-mcp';
 const UPSTREAM_PORT = Number(process.env.UPSTREAM_PORT ?? 8082);
@@ -63,15 +45,21 @@ const ACCESS_EMAILS = new Set(
     .map(s => s.trim().toLowerCase())
     .filter(Boolean),
 );
-if (!ACCESS_TEAM_DOMAIN || !ACCESS_AUD) {
-  console.error('Cloudflare Access is incomplete; refusing to start');
+const ACCESS_ENABLED = ACCESS_AUD !== '';
+if (ACCESS_ENABLED && !ACCESS_TEAM_DOMAIN) {
+  console.error('ACCESS_AUD is set but ACCESS_TEAM_DOMAIN is missing; refusing to start');
   process.exit(1);
 }
-if (!/^[a-z0-9-]+\.cloudflareaccess\.com$/i.test(ACCESS_TEAM_DOMAIN)) {
-  console.error('ACCESS_TEAM_DOMAIN is invalid; refusing to start');
+const ACCESS_ISSUER = ACCESS_ENABLED ? `https://${ACCESS_TEAM_DOMAIN}` : '';
+
+const SECRET_FALLBACK = process.env.ALLOW_SECRET_PATH === '1';
+if (!ACCESS_ENABLED && !SECRET_FALLBACK) {
+  console.error('Cloudflare Access is not configured and secret-path fallback is disabled; refusing to start');
   process.exit(1);
 }
-const ACCESS_ISSUER = `https://${ACCESS_TEAM_DOMAIN}`;
+if (SECRET_FALLBACK && !readRuntimeSecret(GATEWAY_SECRET_FILE, 'Gateway fallback', 32)) {
+  process.exit(1);
+}
 
 const jwks = { keys: new Map(), fetchedAt: 0 };
 async function accessKey(kid) {
@@ -134,7 +122,16 @@ async function verifyAccessJwt(token) {
 }
 
 function pathAllowed(url) {
-  return (url ?? '').split('?')[0] === '/mcp';
+  const path = (url ?? '').split('?')[0];
+  if (ACCESS_ENABLED && path === '/mcp') return true;
+  if (!SECRET_FALLBACK) return false;
+
+  const secret = readRuntimeSecret(GATEWAY_SECRET_FILE, 'Gateway fallback', 32);
+  if (!secret) return false;
+  const expected = Buffer.from(`/${secret}/mcp`);
+  const actual = Buffer.from(path);
+  return actual.length === expected.length &&
+    crypto.timingSafeEqual(actual, expected);
 }
 
 const windows = new Map();
@@ -164,6 +161,9 @@ function send(res, status, body = '') {
 }
 
 function upstreamHeaders(req, bodyLength) {
+  const token = readRuntimeSecret(GITHUB_PAT_FILE, 'GitHub PAT', 20);
+  if (!token) return null;
+
   const headers = { ...req.headers };
   for (const name of [
     'authorization',
@@ -182,7 +182,7 @@ function upstreamHeaders(req, bodyLength) {
   }
 
   headers.host = `${UPSTREAM_HOST}:${UPSTREAM_PORT}`;
-  headers.authorization = `Bearer ${TOKEN}`;
+  headers.authorization = `Bearer ${token}`;
   if (bodyLength !== null) headers['content-length'] = String(bodyLength);
   return headers;
 }
@@ -213,13 +213,13 @@ function rewriteUpstreamRequest(parsed, originalBody) {
   });
 
   if (!changed) return originalBody;
-
   const payload = Array.isArray(parsed) ? rewritten : rewritten[0];
   return Buffer.from(JSON.stringify(payload));
 }
 
 function forward(req, res, body, secretIds) {
   const headers = upstreamHeaders(req, body ? body.length : null);
+  if (!headers) return send(res, 503, 'GitHub credential unavailable');
 
   const up = http.request(
     {
@@ -286,12 +286,14 @@ http.createServer(async (req, res) => {
   if (!pathAllowed(req.url)) return send(res, 404);
 
   let identity = clientIp(req);
-  const verified = await verifyAccessJwt(req.headers['cf-access-jwt-assertion']);
-  if (!verified.ok) {
-    console.warn(`access denied from ${identity}: ${verified.reason}`);
-    return send(res, 403, 'forbidden');
+  if (ACCESS_ENABLED) {
+    const verified = await verifyAccessJwt(req.headers['cf-access-jwt-assertion']);
+    if (!verified.ok) {
+      console.warn(`access denied from ${identity}: ${verified.reason}`);
+      return send(res, 403, 'forbidden');
+    }
+    if (verified.email) identity = verified.email;
   }
-  if (verified.email) identity = verified.email;
 
   if (rateLimited(identity)) return send(res, 429, 'rate limited');
 
@@ -347,6 +349,8 @@ http.createServer(async (req, res) => {
   });
 }).listen(PORT, '0.0.0.0', () => {
   console.log(
-    `github gateway listening on ${PORT}; cloudflare access required (${ACCESS_TEAM_DOMAIN})`,
+    `github gateway listening on ${PORT}; cloudflare access: ` +
+    `${ACCESS_ENABLED ? `required (${ACCESS_TEAM_DOMAIN})` : 'off'}; ` +
+    `secret fallback: ${SECRET_FALLBACK ? 'enabled' : 'off'}`,
   );
 });

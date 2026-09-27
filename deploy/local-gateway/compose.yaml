@@ -14,7 +14,7 @@ services:
     user: "65532:65532"
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
+      - /tmp
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -28,19 +28,13 @@ services:
     image: node:26.9.0-alpine
     command:
       - sh
-      - -eu
       - -c
-      - |
-        i=0
-        while [ ! -s /run/github-mcp-secrets/github_pat ]; do
-          i=$$((i + 1))
-          if [ "$$i" -ge 400 ]; then
-            echo "runtime GitHub credential was not injected; refusing to start" >&2
-            exit 1
-          fi
-          sleep 0.05
-        done
-        exec node /app/gateway.mjs
+      - >-
+          while [ ! -s /run/github-mcp-secrets/github_pat ]; do sleep 0.05; done;
+          if [ "$${ALLOW_SECRET_PATH:-0}" = "1" ]; then
+            while [ ! -s /run/github-mcp-secrets/gateway_secret ]; do sleep 0.05; done;
+          fi;
+          exec node /app/gateway.mjs
     user: node
     env_file:
       - ./config/gateway.env
@@ -51,6 +45,8 @@ services:
       PORT: "8080"
       RATE_PER_MIN: "120"
       MAX_BODY_BYTES: "5242880"
+      GITHUB_PAT_FILE: /run/github-mcp-secrets/github_pat
+      GATEWAY_SECRET_FILE: /run/github-mcp-secrets/gateway_secret
     volumes:
       - ./public:/app:ro
     networks:
@@ -62,20 +58,8 @@ services:
       - github-mcp
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
+      - /tmp
       - /run/github-mcp-secrets:rw,nosuid,nodev,noexec,size=64k,uid=1000,gid=1000,mode=0700
-    post_start:
-      - command:
-          - sh
-          - -eu
-          - -c
-          - |
-            umask 077
-            test -n "$$GITHUB_PAT_RUNTIME"
-            printf '%s' "$$GITHUB_PAT_RUNTIME" > /run/github-mcp-secrets/github_pat
-        user: node
-        environment:
-          GITHUB_PAT_RUNTIME: ${GITHUB_PAT_RUNTIME:?GitHub runtime PAT is required}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -83,7 +67,13 @@ services:
     pids_limit: 100
     mem_limit: 256m
     cpus: 0.5
-    restart: "no"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
 
 networks:
   github_backend:

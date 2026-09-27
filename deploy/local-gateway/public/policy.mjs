@@ -142,9 +142,6 @@ export function compactToolDefinition(tool) {
   const out = structuredClone(tool);
   if (out.description) out.description = compactText(out.description, 180);
   if (out.inputSchema) out.inputSchema = compactSchema(out.inputSchema);
-  // Preserve the callable input contract while avoiding redundant advertised
-  // output schemas in the model context. The upstream server still returns and
-  // validates the real result.
   delete out.outputSchema;
   return out;
 }
@@ -168,10 +165,6 @@ function annotateTool(tool) {
   }
   if (out.name === 'get_me') out.annotations.openWorldHint = false;
 
-  // ChatGPT action-discovery compatibility probe:
-  // label_write has an input property literally named "description".
-  // Advertise it as "label_description" to test whether that name
-  // collides with ChatGPT's MCP -> action schema conversion.
   if (out.name === 'label_write' &&
       out.inputSchema?.properties?.description &&
       !out.inputSchema.properties.label_description) {

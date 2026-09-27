@@ -1,0 +1,5 @@
+services: {}
+networks:
+  edge:
+    name: github_mcp_edge
+    external: false
