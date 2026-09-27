@@ -14,7 +14,6 @@ $Source = $PSScriptRoot
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 foreach ($relative in @(
     "compose.yaml",
-    "compose.cloudflare.yaml",
     "cloudflared.ingress-snippet.yml",
     ".env.example",
     "secrets.env.example",
