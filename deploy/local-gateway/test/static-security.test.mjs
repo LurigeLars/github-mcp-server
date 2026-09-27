@@ -44,6 +44,13 @@ test('Windows runtime uses DPAPI and stdin injection rather than secret env', ()
   assert.doesNotMatch(runner, /-e\s+GITHUB_PERSONAL_ACCESS_TOKEN/);
 });
 
+test('every runtime secret import recreates the gateway first', () => {
+  assert.match(runner, /function Start-GatewayForSecretImport/);
+  assert.match(runner, /up -d --force-recreate github-gateway/);
+  assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport/);
+  assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport/);
+});
+
 test('gateway config example contains no runtime credential key', () => {
   assert.equal(envExample.includes('GITHUB_PERSONAL_ACCESS_TOKEN'), false);
   assert.equal(envExample.includes('GATEWAY_SECRET='), false);
