@@ -9,6 +9,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const compose = read('compose.yaml');
 const gateway = read('public/gateway.mjs');
 const envExample = read('config/gateway.env.example');
+const smokeCompose = read('test/runtime-secret-smoke.compose.yaml');
 
 const forbiddenPersistent = [
   'GITHUB_PERSONAL_ACCESS_TOKEN',
@@ -34,4 +35,10 @@ test('gateway reads credential from tmpfs, not process env', () => {
 test('gateway config example contains no runtime credential key', () => {
   assert.equal(envExample.includes('GITHUB_PERSONAL_ACCESS_TOKEN'), false);
   assert.equal(envExample.includes('GATEWAY_SECRET'), false);
+});
+
+test('runtime smoke stack is isolated from production networks', () => {
+  assert.equal(smokeCompose.includes('edge:'), false);
+  assert.equal(smokeCompose.includes('github_backend'), false);
+  assert.match(smokeCompose, /github-gateway-smoke/);
 });
