@@ -40,14 +40,3 @@ jobs:
           node --check deploy/local-gateway/public/gateway.mjs
           node --check deploy/local-gateway/public/policy.mjs
           node --test deploy/local-gateway/test/static-security.test.mjs
-
-  # Temporary compatibility context for the current default-branch ruleset.
-  # Remove after the required check is changed from fork-ci to overlay-ci.
-  fork-ci:
-    name: fork-ci
-    needs: overlay-ci
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Compatibility status
-        run: echo "overlay-ci passed"
