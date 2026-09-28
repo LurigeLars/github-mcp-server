@@ -1,0 +1,53 @@
+name: Overlay CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: overlay-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  overlay-ci:
+    name: overlay-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out overlay
+        uses: actions/checkout@v7
+
+      - name: Enforce thin overlay boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e go.mod
+          test ! -e go.sum
+          test ! -d cmd/github-mcp-server
+          test ! -d pkg/github
+          test ! -d ui
+          grep -Eq 'image: ghcr\.io/github/github-mcp-server:v[^@]+@sha256:[0-9a-f]{64}$' deploy/local-gateway/compose.yaml
+
+      - name: Validate gateway
+        run: |
+          node --check deploy/local-gateway/public/gateway.mjs
+          node --check deploy/local-gateway/public/policy.mjs
+          node --test deploy/local-gateway/test/static-security.test.mjs
+
+  # Temporary compatibility context for the current default-branch ruleset.
+  # Remove after the required check is changed from fork-ci to overlay-ci.
+  fork-ci:
+    name: fork-ci
+    needs: overlay-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compatibility status
+        run: echo "overlay-ci passed"
