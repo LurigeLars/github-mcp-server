@@ -207,7 +207,6 @@ function forward(req, res, body, secretIds) {
 
   // The PAT is deliberately read from runtime tmpfs and forwarded only to the fixed internal MCP backend.
   const up = http.request(
-    // codeql[js/file-access-to-http]
     { host: UPSTREAM_HOST, port: UPSTREAM_PORT, method: req.method, path: UPSTREAM_PATH, headers },
     upRes => {
       const responseHeaders = { ...upRes.headers };
