@@ -28,6 +28,13 @@ test('compose does not persist GitHub credentials in service environment', () =>
   assert.match(compose, /GITHUB_PAT_FILE:\s*\/run\/github-mcp-secrets\/github_pat/);
 });
 
+test('committed gateway routes PAT only to the private GitHub MCP backend', () => {
+  assert.match(compose, /UPSTREAM_HOST:\s*github-mcp/);
+  assert.match(compose, /UPSTREAM_PORT:\s*"8082"/);
+  assert.match(compose, /github_backend:/);
+  assert.equal(/^\s*ports:/m.test(compose), false, 'compose must not publish host ports');
+});
+
 test('gateway consumes credential from tmpfs and removes the file', () => {
   assert.match(gateway, /\/run\/github-mcp-secrets\/github_pat/);
   assert.equal(gateway.includes('process.env.GITHUB_PERSONAL_ACCESS_TOKEN'), false);
