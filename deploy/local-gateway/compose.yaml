@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
 
   github-gateway:
-    image: node:26.9.0-alpine
+    image: node:26.10.0-alpine
     command:
       - sh
       - -c
