@@ -1,0 +1,77 @@
+name: Temporary branch cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Cleanup phase
+        required: true
+        type: choice
+        options:
+          - stale
+          - final
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Delete allowlisted branches
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ inputs.mode }}" == "stale" ]]; then
+            branches=(
+              "chore/advanced-codeql-audit-20260926"
+              "chore/advanced-security-instructions-20260925"
+              "chore/dependabot-local-compose-20260928"
+              "chore/dependabot-ui-version-updates"
+              "chore/fork-ci"
+              "chore/standard-worktree-helper"
+              "cleanup/overlay-ci-naming"
+              "cleanup/remove-fork-ci-shim"
+              "cleanup/remove-fork-terminology"
+              "cleanup/purge-stale-branches"
+              "docs/readme-cleanup-20260926"
+              "docs/readme-repository-status-20260926"
+              "fix/codeql-intentional-internal-forward"
+              "fix/codeql-repo-specific-filter"
+              "fix/fork-docker-runner"
+              "fix/github-gateway-up-idempotence-20260927"
+              "maintenance/codeql-and-repo-cleanup"
+              "privacy/remove-personal-name"
+              "refactor/thin-deployment-overlay"
+              "security/codeql-hardening-20260925"
+              "security/codeql-vite-path-hardening-20260925"
+              "security/dpapi-gateway-pat-20260927"
+              "security/privacy-audit-remediation-20260926"
+            )
+          elif [[ "${{ inputs.mode }}" == "final" ]]; then
+            # Give the removal PR enough time to merge, then remove its head branch.
+            sleep 300
+            branches=("cleanup/remove-temporary-branch-cleaner")
+          else
+            echo "Unsupported mode" >&2
+            exit 1
+          fi
+
+          for branch in "${branches[@]}"; do
+            if [[ "$branch" == "main" ]]; then
+              echo "Refusing to delete main" >&2
+              exit 1
+            fi
+
+            if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+              echo "Deleting $branch"
+              git push origin --delete "$branch"
+            else
+              echo "Already absent: $branch"
+            fi
+          done
