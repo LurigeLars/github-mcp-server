@@ -18,30 +18,25 @@ jobs:
   fork-ci:
     name: fork-ci
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
-      - name: Check out code
+      - name: Check out overlay
         uses: actions/checkout@v7
 
-      - name: Build UI
-        uses: ./.github/actions/build-ui
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Verify module graph is tidy
-        run: go mod tidy -diff
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Unit tests
+      - name: Enforce thin overlay boundary
         shell: bash
-        run: script/test
+        run: |
+          set -euo pipefail
+          test ! -e go.mod
+          test ! -e go.sum
+          test ! -d cmd/github-mcp-server
+          test ! -d pkg/github
+          test ! -d ui
+          grep -Eq 'image: ghcr\.io/github/github-mcp-server:v[^@]+@sha256:[0-9a-f]{64}$' deploy/local-gateway/compose.yaml
 
-      - name: Build server
-        run: go build -v ./cmd/github-mcp-server
+      - name: Validate gateway
+        run: |
+          node --check deploy/local-gateway/public/gateway.mjs
+          node --check deploy/local-gateway/public/policy.mjs
+          node --test deploy/local-gateway/test/static-security.test.mjs
