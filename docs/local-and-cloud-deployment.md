@@ -1,6 +1,6 @@
 # Local and cloud deployment architecture
 
-This repository is a **deployment overlay** around the official GitHub MCP Server container. It does not maintain a separate copy of the upstream server implementation.
+This repository is an **independent deployment/security overlay** around the official GitHub MCP Server container. It is not part of the upstream fork network and does not carry a separate copy of the upstream server implementation.
 
 ## Runtime path
 
@@ -13,59 +13,116 @@ Cloud client
   -> GitHub API
 ```
 
-The authoritative image pin lives in `deploy/local-gateway/compose.yaml`. Both the release tag and digest are pinned so an upstream tag movement cannot silently replace the runtime.
+The authoritative image pins live in `deploy/local-gateway/compose.yaml`. Release tags and immutable digests are pinned so a moved tag cannot silently replace the runtime.
 
-## What this repository owns
+## Responsibility split
+
+### Upstream GitHub MCP Server
+
+Upstream owns:
+
+- MCP server implementation
+- tool behavior
+- GitHub API integrations
+- bug fixes and releases
+- the official `ghcr.io/github/github-mcp-server` image
+
+### This repository
+
+The overlay owns:
 
 - Compose topology and container hardening
 - Cloudflare-facing gateway
-- server-side policy/header filtering
+- server-side tool/policy and header filtering
 - Windows DPAPI-backed GitHub PAT storage
 - runtime secret injection over stdin into container tmpfs
 - security smoke tests
-- startup/maintenance helpers
+- startup and maintenance helpers
+- CI, CodeQL and dependency monitoring
 
-The GitHub MCP server implementation, tools and GitHub API behavior are upstream responsibilities.
+Upstream source must not be vendored into this repository.
+
+## Network boundary
+
+The backend service `github-mcp` is reachable only on the private Docker network used by the gateway.
+
+The gateway also joins the shared Cloudflare edge network. No host port is published for cloud access.
+
+Cloudflare Access is the external authentication layer. The Node gateway is the internal authorization/policy boundary and injects the GitHub PAT only on the fixed backend hop to `github-mcp:8082`.
+
+Client-supplied `X-MCP-*` headers are stripped so a remote caller cannot widen server-side policy.
 
 ## Secret boundary
 
 Real credentials and deployment identity are never committed.
 
-The GitHub PAT is stored on Windows with DPAPI CurrentUser. The Windows wrapper decrypts it only for runtime injection, streams it over stdin into a tmpfs file inside the gateway container, and the gateway consumes/unlinks that file during startup. The secret must not appear in Docker `.Config.Env`, Compose env files, Git history or a container writable layer.
+The GitHub PAT is stored on Windows with DPAPI CurrentUser. The Windows wrapper:
 
-Use the example files under `deploy/local-gateway/` to create local configuration.
+1. decrypts the PAT in the current user process,
+2. streams it over stdin,
+3. writes it into gateway-container tmpfs,
+4. starts the gateway,
+5. lets the gateway read and unlink the tmpfs file.
 
-## Network boundary
+The PAT must not appear in Docker `.Config.Env`, Compose env files, Git history, image layers or command-line arguments.
 
-Do not publish the gateway or backend directly to a host port for cloud access. The gateway joins the existing Cloudflare edge network; the backend remains on the private Docker network.
+Plaintext necessarily exists transiently in the Windows process, Docker exec stdin and gateway process memory while the service is running. DPAPI protects at-rest host storage; it does not eliminate runtime plaintext.
 
-Cloudflare Access is the external authentication layer. The Node gateway remains the internal authorization/policy boundary and injects the GitHub PAT only on the backend hop.
+The gateway has Docker auto-restart disabled because Docker alone cannot reconstruct the DPAPI-protected credential after a container restart.
 
 ## Server policy
 
-`config/github.env` defines the server-side GitHub MCP toolsets and exclusions. The gateway strips client-supplied `X-MCP-*` headers so a remote client cannot widen those choices.
+Local `config/github.env` defines GitHub MCP toolsets and exclusions.
 
-Lockdown mode is enabled as defense-in-depth for untrusted repository content. It reduces prompt-injection exposure but does not turn repository content into trusted instructions.
+The deployment currently uses server-side lockdown/policy controls as defense-in-depth against untrusted repository content. Repository content remains untrusted input.
 
-The response policy also masks secret values returned by GitHub Secret Scanning surfaces before they reach clients.
+The response policy also masks secret values returned by Secret Scanning surfaces before they reach clients.
 
-## Updating upstream
+## Dependency and upstream update flow
 
-There is no upstream merge procedure.
+There is no upstream Git merge procedure.
 
-When GitHub releases a new GitHub MCP Server version:
+`.github/dependabot.yml` runs weekly for:
 
-1. Review the official release/change set.
-2. Update the official image tag and digest in `deploy/local-gateway/compose.yaml`.
-3. Run the repository CI/security checks.
-4. Deploy with the Windows wrapper.
-5. Run `deploy/local-gateway/github-mcp.ps1 test`.
+- `docker-compose` in `/deploy/local-gateway`
+- `github-actions` in the repository root
 
-If the new upstream version requires a gateway/config compatibility change, make that change in this overlay. Do not copy the upstream server source into the repository.
+This means the official GitHub MCP Server image pin, Node gateway image and GitHub Actions can receive Dependabot update PRs when newer supported versions are detected.
+
+Dependabot PRs are not auto-merged. They go through the same protected-branch flow as other changes.
+
+For an upstream GitHub MCP update:
+
+1. Dependabot normally opens a PR, or the image tag/digest is updated manually.
+2. Review the upstream release notes/change set.
+3. Run repository CI/security checks.
+4. Merge through protected `main`.
+5. Deploy with the Windows wrapper.
+6. Run `deploy/local-gateway/github-mcp.ps1 test`.
+
+If the new upstream version requires compatibility work, change the overlay only. Do not copy upstream server source into the repository.
+
+## CI and repository policy
+
+The active versioned workflows are:
+
+- `overlay-ci.yml` — verifies the thin-overlay boundary, official-image pin and gateway syntax/tests
+- `local-gateway-security.yml` — verifies secret/runtime invariants and Windows DPAPI behavior
+- `codeql.yml` — scans GitHub Actions and JavaScript/TypeScript
+
+The default-branch ruleset:
+
+- protects `main`
+- prevents branch deletion
+- prevents non-fast-forward updates
+- requires pull requests
+- requires the `overlay-ci` status check with strict branch freshness
+
+Development branches are short-lived and should be deleted after merge.
 
 ## Local verification
 
-From the deployment directory on Windows:
+From `deploy/local-gateway` on Windows:
 
 ```powershell
 .\github-mcp.ps1 up
