@@ -1,5 +1,16 @@
 # GitHub MCP local deployment overlay
 
+## Current deployment and security posture
+
+This repository is a thin local deployment/security overlay around the official GitHub MCP Server image.
+
+- The official GitHub MCP backend is pinned by release and immutable image digest; upstream server source is not vendored here.
+- The public gateway runs as non-root `node` with a read-only filesystem, dropped Linux capabilities, and `no-new-privileges`.
+- The backend runs with an explicit non-root container user.
+- GitHub credentials are protected on the Windows host with DPAPI and injected at runtime through tmpfs rather than Compose environment variables.
+- Cloud-facing requests are authenticated and policy-filtered before they can reach the backend.
+- Machine-specific paths, account identity, Cloudflare values, repository access tokens, and credentials must remain outside Git.
+
 This repository is the deployment and security overlay for a local GitHub MCP runtime.
 
 It is an **independent repository**, not part of the upstream GitHub MCP fork network, and it does **not** maintain a separate implementation of GitHub MCP Server. The backend is the official GitHub container image, pinned by version and digest in `deploy/local-gateway/compose.yaml`.
