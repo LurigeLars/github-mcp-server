@@ -1,0 +1,40 @@
+name: One-time branch cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Cleanup phase
+        required: true
+        type: choice
+        options:
+          - docs
+          - final
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Delete allowlisted branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.mode }}" == "docs" ]]; then
+            branches=("docs/current-overlay-architecture" "cleanup/final-docs-branch")
+          elif [[ "${{ inputs.mode }}" == "final" ]]; then
+            sleep 180
+            branches=("cleanup/remove-one-time-cleaner")
+          else
+            exit 1
+          fi
+          for branch in "${branches[@]}"; do
+            [[ "$branch" != "main" ]] || exit 1
+            if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+              git push origin --delete "$branch"
+            fi
+          done
