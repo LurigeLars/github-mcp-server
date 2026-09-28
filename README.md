@@ -1,6 +1,6 @@
 # GitHub MCP local deployment overlay
 
-This repository is the deployment and security overlay for Jakob's local GitHub MCP runtime.
+This repository is the deployment and security overlay for a local GitHub MCP runtime.
 
 It is **not** a fork-maintained implementation of GitHub MCP Server. The MCP backend is the official GitHub container image, pinned by version and digest in `deploy/local-gateway/compose.yaml`.
 
