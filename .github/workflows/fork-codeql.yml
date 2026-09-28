@@ -52,6 +52,12 @@ jobs:
           config: |
             queries:
               - uses: security-and-quality
+            # This repository intentionally reads the PAT from runtime tmpfs and
+            # forwards it over HTTP only to the private github-mcp Docker service.
+            # Keep all other security-and-quality queries enabled.
+            query-filters:
+              - exclude:
+                  id: js/file-access-to-http
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
