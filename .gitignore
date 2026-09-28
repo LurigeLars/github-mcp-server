@@ -1,0 +1,15 @@
+# Local/editor state
+.idea/
+.vscode/
+.DS_Store
+.history/
+
+# Local deployment configuration and credentials
+deploy/local-gateway/.env
+deploy/local-gateway/secrets.env
+deploy/local-gateway/config/github.env
+deploy/local-gateway/config/gateway.env
+
+# Temporary/runtime artifacts
+tmp/
+*.log

@@ -1,0 +1,65 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/local-gateway/public/**"
+      - ".github/workflows/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "deploy/local-gateway/public/**"
+      - ".github/workflows/**"
+  schedule:
+    - cron: "29 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config: |
+            queries:
+              - uses: security-and-quality
+            # This repository intentionally reads the PAT from runtime tmpfs and
+            # forwards it over HTTP only to the private github-mcp Docker service.
+            # Keep all other security-and-quality queries enabled.
+            query-filters:
+              - exclude:
+                  id: js/file-access-to-http
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}

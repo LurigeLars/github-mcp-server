@@ -1,0 +1,109 @@
+name: Local Gateway Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: local-gateway-static
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enforce thin overlay boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e go.mod
+          test ! -e go.sum
+          test ! -d cmd/github-mcp-server
+          test ! -d pkg/github
+          test ! -d ui
+          grep -Eq 'image: ghcr\.io/github/github-mcp-server:v[^@]+@sha256:[0-9a-f]{64}$' deploy/local-gateway/compose.yaml
+
+      - name: Check gateway syntax and static security tests
+        run: |
+          node --check deploy/local-gateway/public/gateway.mjs
+          node --check deploy/local-gateway/public/policy.mjs
+          node --test deploy/local-gateway/test/static-security.test.mjs
+
+      - name: Exercise isolated stdin-to-tmpfs runtime injection
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=github-mcp-secret-smoke-ci
+          compose=deploy/local-gateway/test/runtime-secret-smoke.compose.yaml
+          export GITHUB_MCP_DEPLOY_ROOT="$PWD/deploy/local-gateway"
+
+          cleanup() {
+            docker compose -p "$project" -f "$compose" down -v >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker compose -p "$project" -f "$compose" up -d --force-recreate github-gateway-smoke
+          id="$(docker compose -p "$project" -f "$compose" ps -q github-gateway-smoke)"
+          test -n "$id"
+
+          envs="$(docker inspect "$id" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+          if grep -Eq '^(GITHUB_PERSONAL_ACCESS_TOKEN|GATEWAY_SECRET)=' <<<"$envs"; then
+            echo "forbidden credential key persisted in Docker Config.Env" >&2
+            exit 1
+          fi
+
+          printf '%s' 'ci-runtime-test-value-0123456789abcdef' |
+            docker compose -p "$project" -f "$compose" exec -T --user 1000:1000 github-gateway-smoke               sh -c 'umask 077; cat > /run/github-mcp-secrets/github_pat'
+
+          healthy=0
+          for _ in $(seq 1 40); do
+            if docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke               node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              healthy=1
+              break
+            fi
+            sleep 0.25
+          done
+          test "$healthy" -eq 1
+
+          docker compose -p "$project" -f "$compose" exec -T github-gateway-smoke             sh -c 'test ! -e /run/github-mcp-secrets/github_pat'
+
+          if docker diff "$id" | grep -Eq '/run/github-mcp-secrets/(github_pat|gateway_secret)$'; then
+            echo "runtime credential file appeared in container writable-layer diff" >&2
+            exit 1
+          fi
+
+  windows-dpapi:
+    name: local-gateway-windows-dpapi
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Parse all local gateway PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem ./deploy/local-gateway -Filter *.ps1 -Recurse | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              Write-Error "$($_.FullName): $($errors -join '; ')"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Exercise Windows DPAPI CurrentUser round trip
+        shell: pwsh
+        run: ./deploy/local-gateway/test/dpapi.test.ps1
