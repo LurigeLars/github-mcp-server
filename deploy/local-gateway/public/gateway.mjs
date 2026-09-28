@@ -205,6 +205,8 @@ function rewriteUpstreamRequest(parsed, originalBody) {
 function forward(req, res, body, secretIds) {
   const headers = upstreamHeaders(req, body ? body.length : null);
 
+  // The PAT is deliberately read from runtime tmpfs and forwarded only to the fixed internal MCP backend.
+  // codeql[js/file-access-to-http]
   const up = http.request(
     { host: UPSTREAM_HOST, port: UPSTREAM_PORT, method: req.method, path: UPSTREAM_PATH, headers },
     upRes => {
@@ -304,9 +306,6 @@ http.createServer(async (req, res) => {
     }
 
     const secretIds = secretResultIdsFromRequest(parsed);
-    const methods = [parsed].flat().map(m =>
-      m?.method === 'tools/call' ? `call:${m?.params?.name}` : m?.method
-    );
     console.log(`${new Date().toISOString()} authenticated MCP request`);
 
     const upstreamBody = rewriteUpstreamRequest(parsed, body);
