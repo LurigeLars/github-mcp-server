@@ -82,4 +82,4 @@ networks:
     driver: bridge
   edge:
     external: true
-    name: ${MCP_EDGE_NETWORK}
+    name: github-public_edge

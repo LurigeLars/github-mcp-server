@@ -5,13 +5,13 @@ on:
     branches:
       - main
     paths:
-      - "deploy/local-gateway/public/**"
+      - "deploy/local-gateway/**"
       - ".github/workflows/**"
   pull_request:
     branches:
       - main
     paths:
-      - "deploy/local-gateway/public/**"
+      - "deploy/local-gateway/**"
       - ".github/workflows/**"
   schedule:
     - cron: "29 4 * * 1"

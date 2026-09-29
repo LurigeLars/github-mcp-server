@@ -43,14 +43,6 @@ function Set-EnvValue([string]$Path, [string]$Name, [string]$Value) {
     [IO.File]::WriteAllText($Path, $content, [Text.UTF8Encoding]::new($false))
 }
 
-$rows = @(docker ps --filter "label=com.docker.compose.service=cloudflared" --format '{{.ID}}')
-if ($rows.Count -eq 1) {
-    $networks = @(docker inspect $rows[0] --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{println}}{{end}}' |
-        ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $edge = @($networks | Where-Object { $_ -like "*_edge" })
-    if ($edge.Count -eq 1) { Set-EnvValue (Join-Path $Target ".env") "MCP_EDGE_NETWORK" $edge[0] }
-}
-
 $firecrawlEnv = Join-Path $FirecrawlRoot ".env"
 $gatewayEnv = Join-Path $FirecrawlRoot "public\gateway.env"
 foreach ($name in @("ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "ACCESS_ALLOWED_EMAILS")) {

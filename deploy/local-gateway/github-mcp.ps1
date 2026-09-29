@@ -21,6 +21,28 @@ $LegacyPaths = @(
   (Join-Path $Root 'secrets.env')
 ) | Select-Object -Unique
 $Compose = @('compose', '--project-directory', $Root, '--env-file', (Join-Path $Root '.env'), '-f', (Join-Path $Root 'compose.yaml'))
+$EdgeNetwork = 'github-public_edge'
+
+function Ensure-DedicatedEdgeNetwork {
+  & docker network inspect $EdgeNetwork *> $null
+  if ($LASTEXITCODE -ne 0) {
+    & docker network create $EdgeNetwork *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create dedicated Docker network $EdgeNetwork." }
+  }
+
+  $cloudflared = @(& docker ps --filter 'label=com.docker.compose.service=cloudflared' --format '{{.ID}}' |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($cloudflared.Count -ne 1) {
+    throw "Expected exactly one running cloudflared service container; found $($cloudflared.Count)."
+  }
+
+  $networks = @(& docker inspect $cloudflared[0] --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{println}}{{end}}' |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($networks -notcontains $EdgeNetwork) {
+    & docker network connect $EdgeNetwork $cloudflared[0]
+    if ($LASTEXITCODE -ne 0) { throw "Failed to attach cloudflared to $EdgeNetwork." }
+  }
+}
 
 function Wait-Docker([int]$Seconds) {
   $deadline = (Get-Date).AddSeconds($Seconds)
@@ -82,6 +104,7 @@ function Wait-GatewayHealthy {
 }
 
 function Start-GatewayForSecretImport {
+  Ensure-DedicatedEdgeNetwork
   & docker @Compose up -d github-mcp
   if ($LASTEXITCODE -ne 0) { throw 'GitHub MCP backend start failed.' }
 
