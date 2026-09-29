@@ -35,6 +35,15 @@ test('committed gateway routes PAT only to the private GitHub MCP backend', () =
   assert.equal(/^\s*ports:/m.test(compose), false, 'compose must not publish host ports');
 });
 
+test('GitHub gateway uses a dedicated edge network', () => {
+  assert.match(compose, /name:\s*github-public_edge/);
+  assert.equal(compose.includes('MCP_EDGE_NETWORK'), false);
+  assert.equal(compose.includes('firecrawl_edge'), false);
+  assert.match(runner, /\$EdgeNetwork = 'github-public_edge'/);
+  assert.match(runner, /docker network connect \$EdgeNetwork/);
+  assert.match(runner, /Expected exactly one running cloudflared service container/);
+});
+
 test('gateway consumes credential from tmpfs and removes the file', () => {
   assert.match(gateway, /\/run\/github-mcp-secrets\/github_pat/);
   assert.equal(gateway.includes('process.env.GITHUB_PERSONAL_ACCESS_TOKEN'), false);
