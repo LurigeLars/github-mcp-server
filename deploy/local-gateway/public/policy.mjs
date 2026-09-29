@@ -226,6 +226,23 @@ function inlineEmbeddedTextResources(msg) {
 export function rewriteResponse(msg, secretIds, inlineTextIds) {
   if (!msg || typeof msg !== 'object') return msg;
 
+  if (msg?.result && Object.prototype.hasOwnProperty.call(msg.result, 'content')) {
+    const c = msg.result.content;
+    const types = Array.isArray(c) ? c.map(item => String(item?.type ?? typeof item)) : [typeof c];
+    const resources = Array.isArray(c)
+      ? c.filter(item => item?.type === 'resource').map(item => ({
+          hasText: typeof item?.resource?.text === 'string',
+          uri: String(item?.resource?.uri ?? '').slice(0, 160),
+        }))
+      : [];
+    console.log('github gateway result-content shape ' + JSON.stringify({
+      id: msg.id ?? null,
+      isArray: Array.isArray(c),
+      types,
+      resources,
+    }));
+  }
+
   let out = rewriteToolList(msg);
   // Tool results may arrive on a different Streamable HTTP/SSE response than
   // the request that initiated them. Match the resource's repo URI as well as
