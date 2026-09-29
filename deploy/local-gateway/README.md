@@ -1,6 +1,6 @@
 # Local GitHub MCP gateway deployment
 
-This directory is the versioned source for the Windows/Docker deployment that exposes the **official GitHub MCP Server container** through the shared Cloudflare edge network.
+This directory is the versioned source for the Windows/Docker deployment that exposes the **official GitHub MCP Server container** through the dedicated GitHub Cloudflare edge network.
 
 The repository itself is only the deployment/security overlay. Do not add upstream GitHub MCP Server implementation source here.
 
