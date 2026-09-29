@@ -46,7 +46,7 @@ Upstream source must not be vendored into this repository.
 
 The backend service `github-mcp` is reachable only on the private Docker network used by the gateway.
 
-The gateway also joins the shared Cloudflare edge network. No host port is published for cloud access.
+The gateway also joins the dedicated GitHub Cloudflare edge network. No host port is published for cloud access.
 
 Cloudflare Access is the external authentication layer. The Node gateway is the internal authorization/policy boundary and injects the GitHub PAT only on the fixed backend hop to `github-mcp:8082`.
 
