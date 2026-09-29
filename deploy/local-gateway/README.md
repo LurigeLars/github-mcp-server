@@ -72,3 +72,10 @@ GitHub Actions dependencies are also checked weekly.
 Dependabot opens PRs for supported updates; it does not auto-merge them. Overlay CI, Local Gateway Security and CodeQL should pass before an update is merged and deployed.
 
 The source of truth for the deployed image version and digest remains `compose.yaml`.
+
+
+## ChatGPT text-file materialization
+
+For `get_file_contents` calls targeting repositories owned by `LurigeLars`, the gateway converts upstream MCP embedded **text** resources into ordinary MCP text content before returning the response to ChatGPT. This avoids the per-conversation attachment-materialization prompt for small text files while keeping the official GitHub MCP server unchanged.
+
+The rewrite is intentionally narrow: binary resources, large-file resource links, directory listings and repositories owned by anyone else are left unchanged.

@@ -40,6 +40,20 @@ export const CHATGPT_WRITE_TOOLS = new Set([
 ]);
 
 const SAFE_WRITE_OWNER = 'LurigeLars';
+const MAX_INLINE_TEXT_RESOURCE_CHARS = 128 * 1024;
+
+export function inlineTextResultIdsFromRequest(msg) {
+  const ids = new Set();
+  for (const m of [msg].flat()) {
+    if (m?.method === 'tools/call' &&
+        m?.params?.name === 'get_file_contents' &&
+        String(m?.params?.arguments?.owner ?? '') === SAFE_WRITE_OWNER &&
+        m.id !== undefined) {
+      ids.add(m.id);
+    }
+  }
+  return ids;
+}
 
 export function secretResultIdsFromRequest(msg) {
   const ids = new Set();
@@ -187,10 +201,34 @@ function rewriteToolList(msg) {
   return out;
 }
 
-export function rewriteResponse(msg, secretIds) {
+function inlineEmbeddedTextResources(msg) {
+  if (!Array.isArray(msg?.result?.content)) return msg;
+
+  let changed = false;
+  const content = msg.result.content.map(item => {
+    if (item?.type !== 'resource' ||
+        typeof item?.resource?.text !== 'string' ||
+        item.resource.text.length > MAX_INLINE_TEXT_RESOURCE_CHARS) return item;
+    changed = true;
+    const out = { ...item, type: 'text', text: item.resource.text };
+    delete out.resource;
+    return out;
+  });
+
+  if (!changed) return msg;
+  const out = structuredClone(msg);
+  out.result.content = content;
+  return out;
+}
+
+export function rewriteResponse(msg, secretIds, inlineTextIds) {
   if (!msg || typeof msg !== 'object') return msg;
 
   let out = rewriteToolList(msg);
+  if (inlineTextIds?.has(out.id)) {
+    out = inlineEmbeddedTextResources(out);
+  }
+
   if (!secretIds?.has(out.id)) return out;
 
   if (out === msg) out = structuredClone(msg);
@@ -209,21 +247,21 @@ export function rewriteResponse(msg, secretIds) {
   return out;
 }
 
-export function rewriteJsonText(text, secretIds) {
+export function rewriteJsonText(text, secretIds, inlineTextIds) {
   try {
     const parsed = JSON.parse(text);
     const rewritten = Array.isArray(parsed)
-      ? parsed.map(m => rewriteResponse(m, secretIds))
-      : rewriteResponse(parsed, secretIds);
+      ? parsed.map(m => rewriteResponse(m, secretIds, inlineTextIds))
+      : rewriteResponse(parsed, secretIds, inlineTextIds);
     return JSON.stringify(rewritten);
   } catch {
     return text;
   }
 }
 
-export function rewriteSseLine(line, secretIds) {
+export function rewriteSseLine(line, secretIds, inlineTextIds) {
   if (!line.startsWith('data:')) return line;
   const raw = line.slice(5).trimStart();
-  const rewritten = rewriteJsonText(raw, secretIds);
+  const rewritten = rewriteJsonText(raw, secretIds, inlineTextIds);
   return 'data: ' + rewritten;
 }

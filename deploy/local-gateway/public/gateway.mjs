@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { readFileSync, unlinkSync } from 'node:fs';
 import {
   checkRequestPolicy,
+  inlineTextResultIdsFromRequest,
   secretResultIdsFromRequest,
   rewriteJsonText,
   rewriteSseLine,
@@ -202,7 +203,7 @@ function rewriteUpstreamRequest(parsed, originalBody) {
   return Buffer.from(JSON.stringify(payload));
 }
 
-function forward(req, res, body, secretIds) {
+function forward(req, res, body, secretIds, inlineTextIds) {
   const headers = upstreamHeaders(req, body ? body.length : null);
 
   // The PAT is deliberately read from runtime tmpfs and forwarded only to the fixed internal MCP backend.
@@ -221,9 +222,9 @@ function forward(req, res, body, secretIds) {
           pending += chunk;
           const lines = pending.split('\n');
           pending = lines.pop();
-          if (lines.length) res.write(lines.map(line => rewriteSseLine(line, secretIds)).join('\n') + '\n');
+          if (lines.length) res.write(lines.map(line => rewriteSseLine(line, secretIds, inlineTextIds)).join('\n') + '\n');
         });
-        upRes.on('end', () => res.end(pending ? rewriteSseLine(pending, secretIds) : undefined));
+        upRes.on('end', () => res.end(pending ? rewriteSseLine(pending, secretIds, inlineTextIds) : undefined));
         return;
       }
 
@@ -231,7 +232,7 @@ function forward(req, res, body, secretIds) {
       upRes.on('data', c => chunks.push(c));
       upRes.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
-        const out = Buffer.from(rewriteJsonText(raw, secretIds));
+        const out = Buffer.from(rewriteJsonText(raw, secretIds, inlineTextIds));
         delete responseHeaders['transfer-encoding'];
         responseHeaders['content-length'] = String(out.length);
         res.writeHead(upRes.statusCode ?? 502, responseHeaders);
@@ -269,7 +270,7 @@ http.createServer(async (req, res) => {
 
   if (rateLimited(identity)) return send(res, 429, 'rate limited');
   if (!['POST', 'GET', 'DELETE'].includes(req.method ?? '')) return send(res, 405, 'method not allowed');
-  if (req.method !== 'POST') return forward(req, res, null, new Set());
+  if (req.method !== 'POST') return forward(req, res, null, new Set(), new Set());
 
   const chunks = [];
   let size = 0;
@@ -305,10 +306,11 @@ http.createServer(async (req, res) => {
     }
 
     const secretIds = secretResultIdsFromRequest(parsed);
+    const inlineTextIds = inlineTextResultIdsFromRequest(parsed);
     console.log(`${new Date().toISOString()} authenticated MCP request`);
 
     const upstreamBody = rewriteUpstreamRequest(parsed, body);
-    forward(req, res, upstreamBody, secretIds);
+    forward(req, res, upstreamBody, secretIds, inlineTextIds);
   });
 }).listen(PORT, '0.0.0.0', () => {
   console.log(

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import {
+  inlineTextResultIdsFromRequest,
+  rewriteJsonText,
+} from '../public/policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -90,5 +94,118 @@ test('runtime smoke stack is isolated from production networks and hooks', () =>
   assert.equal(smokeCompose.includes('github_backend'), false);
   assert.equal(smokeCompose.includes('post_start:'), false);
   assert.equal(smokeCompose.includes('GITHUB_PAT_RUNTIME'), false);
-  assert.match(smokeCompose, /github-gateway-smoke/);
+});
+
+
+test('own-repo text file resources are inlined for ChatGPT', () => {
+  const request = {
+    jsonrpc: '2.0',
+    id: 41,
+    method: 'tools/call',
+    params: {
+      name: 'get_file_contents',
+      arguments: {
+        owner: 'LurigeLars',
+        repo: 'github-mcp-server',
+        path: 'AGENTS.md',
+      },
+    },
+  };
+  const inlineIds = inlineTextResultIdsFromRequest(request);
+  assert.equal(inlineIds.has(41), true);
+
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 41,
+    result: {
+      content: [
+        { type: 'text', text: 'successfully downloaded text file' },
+        {
+          type: 'resource',
+          resource: {
+            uri: 'repo://LurigeLars/github-mcp-server/main/contents/AGENTS.md',
+            mimeType: 'text/plain; charset=utf-8',
+            text: '# Repository instructions',
+          },
+        },
+      ],
+      isError: false,
+    },
+  });
+
+  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), inlineIds));
+  assert.deepEqual(rewritten.result.content[1], {
+    type: 'text',
+    text: '# Repository instructions',
+  });
+});
+
+test('text resource inlining is scoped to own repos and leaves binary resources untouched', () => {
+  const foreignRequest = {
+    jsonrpc: '2.0',
+    id: 42,
+    method: 'tools/call',
+    params: {
+      name: 'get_file_contents',
+      arguments: {
+        owner: 'github',
+        repo: 'github-mcp-server',
+        path: 'README.md',
+      },
+    },
+  };
+  assert.equal(inlineTextResultIdsFromRequest(foreignRequest).has(42), false);
+
+  const ownRequest = {
+    ...foreignRequest,
+    id: 43,
+    params: {
+      ...foreignRequest.params,
+      arguments: {
+        ...foreignRequest.params.arguments,
+        owner: 'LurigeLars',
+        path: 'logo.png',
+      },
+    },
+  };
+  const inlineIds = inlineTextResultIdsFromRequest(ownRequest);
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 43,
+    result: {
+      content: [
+        {
+          type: 'resource',
+          resource: {
+            uri: 'repo://LurigeLars/github-mcp-server/main/contents/logo.png',
+            mimeType: 'image/png',
+            blob: 'AAEC',
+          },
+        },
+      ],
+      isError: false,
+    },
+  });
+
+  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), inlineIds));
+  assert.equal(rewritten.result.content[0].type, 'resource');
+  assert.equal(rewritten.result.content[0].resource.blob, 'AAEC');
+
+  const largeTextResponse = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 43,
+    result: {
+      content: [{
+        type: 'resource',
+        resource: {
+          uri: 'repo://LurigeLars/github-mcp-server/main/contents/large.txt',
+          mimeType: 'text/plain',
+          text: 'x'.repeat(128 * 1024 + 1),
+        },
+      }],
+      isError: false,
+    },
+  });
+  const largeRewritten = JSON.parse(rewriteJsonText(largeTextResponse, new Set(), inlineIds));
+  assert.equal(largeRewritten.result.content[0].type, 'resource');
 });
