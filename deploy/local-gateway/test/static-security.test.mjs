@@ -97,23 +97,7 @@ test('runtime smoke stack is isolated from production networks and hooks', () =>
 });
 
 
-test('own-repo text file resources are inlined for ChatGPT', () => {
-  const request = {
-    jsonrpc: '2.0',
-    id: 41,
-    method: 'tools/call',
-    params: {
-      name: 'get_file_contents',
-      arguments: {
-        owner: 'LurigeLars',
-        repo: 'github-mcp-server',
-        path: 'AGENTS.md',
-      },
-    },
-  };
-  const inlineIds = inlineTextResultIdsFromRequest(request);
-  assert.equal(inlineIds.has(41), true);
-
+test('own-repo text file resources are inlined for ChatGPT without request correlation', () => {
   const response = JSON.stringify({
     jsonrpc: '2.0',
     id: 41,
@@ -123,7 +107,7 @@ test('own-repo text file resources are inlined for ChatGPT', () => {
         {
           type: 'resource',
           resource: {
-            uri: 'repo://LurigeLars/github-mcp-server/main/contents/AGENTS.md',
+            uri: 'repo://LurigeLars/github-mcp-server/refs/heads/main/contents/AGENTS.md',
             mimeType: 'text/plain; charset=utf-8',
             text: '# Repository instructions',
           },
@@ -133,72 +117,59 @@ test('own-repo text file resources are inlined for ChatGPT', () => {
     },
   });
 
-  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), inlineIds));
+  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), new Set()));
   assert.deepEqual(rewritten.result.content[1], {
     type: 'text',
     text: '# Repository instructions',
   });
 });
 
-test('text resource inlining is scoped to own repos and leaves binary resources untouched', () => {
-  const foreignRequest = {
+test('text resource inlining is scoped to own repos and leaves binary and large resources untouched', () => {
+  const foreignTextResponse = JSON.stringify({
     jsonrpc: '2.0',
     id: 42,
-    method: 'tools/call',
-    params: {
-      name: 'get_file_contents',
-      arguments: {
-        owner: 'github',
-        repo: 'github-mcp-server',
-        path: 'README.md',
-      },
-    },
-  };
-  assert.equal(inlineTextResultIdsFromRequest(foreignRequest).has(42), false);
-
-  const ownRequest = {
-    ...foreignRequest,
-    id: 43,
-    params: {
-      ...foreignRequest.params,
-      arguments: {
-        ...foreignRequest.params.arguments,
-        owner: 'LurigeLars',
-        path: 'logo.png',
-      },
-    },
-  };
-  const inlineIds = inlineTextResultIdsFromRequest(ownRequest);
-  const response = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 43,
     result: {
-      content: [
-        {
-          type: 'resource',
-          resource: {
-            uri: 'repo://LurigeLars/github-mcp-server/main/contents/logo.png',
-            mimeType: 'image/png',
-            blob: 'AAEC',
-          },
+      content: [{
+        type: 'resource',
+        resource: {
+          uri: 'repo://github/github-mcp-server/refs/heads/main/contents/README.md',
+          mimeType: 'text/plain',
+          text: '# Upstream',
         },
-      ],
+      }],
       isError: false,
     },
   });
+  const foreignRewritten = JSON.parse(rewriteJsonText(foreignTextResponse, new Set(), new Set()));
+  assert.equal(foreignRewritten.result.content[0].type, 'resource');
 
-  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), inlineIds));
-  assert.equal(rewritten.result.content[0].type, 'resource');
-  assert.equal(rewritten.result.content[0].resource.blob, 'AAEC');
-
-  const largeTextResponse = JSON.stringify({
+  const binaryResponse = JSON.stringify({
     jsonrpc: '2.0',
     id: 43,
     result: {
       content: [{
         type: 'resource',
         resource: {
-          uri: 'repo://LurigeLars/github-mcp-server/main/contents/large.txt',
+          uri: 'repo://LurigeLars/github-mcp-server/refs/heads/main/contents/logo.png',
+          mimeType: 'image/png',
+          blob: 'AAEC',
+        },
+      }],
+      isError: false,
+    },
+  });
+  const binaryRewritten = JSON.parse(rewriteJsonText(binaryResponse, new Set(), new Set()));
+  assert.equal(binaryRewritten.result.content[0].type, 'resource');
+  assert.equal(binaryRewritten.result.content[0].resource.blob, 'AAEC');
+
+  const largeTextResponse = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 44,
+    result: {
+      content: [{
+        type: 'resource',
+        resource: {
+          uri: 'repo://LurigeLars/github-mcp-server/refs/heads/main/contents/large.txt',
           mimeType: 'text/plain',
           text: 'x'.repeat(128 * 1024 + 1),
         },
@@ -206,6 +177,6 @@ test('text resource inlining is scoped to own repos and leaves binary resources 
       isError: false,
     },
   });
-  const largeRewritten = JSON.parse(rewriteJsonText(largeTextResponse, new Set(), inlineIds));
+  const largeRewritten = JSON.parse(rewriteJsonText(largeTextResponse, new Set(), new Set()));
   assert.equal(largeRewritten.result.content[0].type, 'resource');
 });
