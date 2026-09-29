@@ -26,7 +26,7 @@ Cloud client
   -> GitHub API
 ```
 
-The gateway and backend communicate on a private Docker network. Cloud-facing traffic reaches the gateway through the shared Cloudflare edge network; the GitHub MCP backend is not exposed directly.
+The gateway and backend communicate on a private Docker network. Cloud-facing traffic reaches the gateway through the dedicated GitHub Cloudflare edge network; the GitHub MCP backend is not exposed directly.
 
 ## Ownership boundary
 
