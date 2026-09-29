@@ -206,9 +206,11 @@ function inlineEmbeddedTextResources(msg) {
 
   let changed = false;
   const content = msg.result.content.map(item => {
+    const uri = String(item?.resource?.uri ?? '');
     if (item?.type !== 'resource' ||
         typeof item?.resource?.text !== 'string' ||
-        item.resource.text.length > MAX_INLINE_TEXT_RESOURCE_CHARS) return item;
+        item.resource.text.length > MAX_INLINE_TEXT_RESOURCE_CHARS ||
+        !uri.startsWith(`repo://${SAFE_WRITE_OWNER}/`)) return item;
     changed = true;
     const out = { ...item, type: 'text', text: item.resource.text };
     delete out.resource;
@@ -225,9 +227,10 @@ export function rewriteResponse(msg, secretIds, inlineTextIds) {
   if (!msg || typeof msg !== 'object') return msg;
 
   let out = rewriteToolList(msg);
-  if (inlineTextIds?.has(out.id)) {
-    out = inlineEmbeddedTextResources(out);
-  }
+  // Tool results may arrive on a different Streamable HTTP/SSE response than
+  // the request that initiated them. Match the resource's repo URI as well as
+  // request correlation so own-repo text still normalizes on those streams.
+  out = inlineEmbeddedTextResources(out);
 
   if (!secretIds?.has(out.id)) return out;
 
