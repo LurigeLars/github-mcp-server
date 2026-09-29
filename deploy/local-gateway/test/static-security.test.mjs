@@ -10,6 +10,7 @@ const compose = read('compose.yaml');
 const gateway = read('public/gateway.mjs');
 const envExample = read('config/gateway.env.example');
 const runner = read('github-mcp.ps1');
+const syncRuntime = read('sync-runtime.ps1');
 const configure = read('scripts/configure_secrets.ps1');
 const smokeCompose = read('test/runtime-secret-smoke.compose.yaml');
 
@@ -65,6 +66,18 @@ test('every runtime secret import recreates the gateway first', () => {
   assert.match(runner, /up -d --force-recreate github-gateway/);
   assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport/);
   assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport/);
+});
+
+test('runtime sync preserves local config and only copies tracked runtime files', () => {
+  assert.match(syncRuntime, /protected = @\(/);
+  assert.match(syncRuntime, /"\.env"/);
+  assert.match(syncRuntime, /"config\\github\.env"/);
+  assert.match(syncRuntime, /"config\\gateway\.env"/);
+  assert.match(syncRuntime, /Copy-TrackedFile/);
+  assert.match(syncRuntime, /Copy-TrackedTree "public"/);
+  assert.match(syncRuntime, /Copy-TrackedTree "scripts"/);
+  assert.doesNotMatch(syncRuntime, /Remove-Item[\s\S]*\.env/);
+  assert.doesNotMatch(syncRuntime, /Copy-Item[\s\S]*secrets\\/);
 });
 
 test('gateway config example contains no runtime credential key', () => {

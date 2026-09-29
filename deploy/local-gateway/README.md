@@ -26,6 +26,17 @@ Cloudflare edge
 
 DPAPI protects at-rest host storage; it does not eliminate runtime plaintext.
 
+## Updating an existing runtime copy
+
+The canonical overlay lives in this directory, while an installed runtime may use copied files in `C:\\ClaudeCode\\github-mcp-local`. After pulling a newer `main`, sync only tracked runtime code/templates without overwriting local environment files or DPAPI secrets:
+
+```powershell
+.\sync-runtime.ps1
+C:\ClaudeCode\github-mcp-local\github-mcp.ps1 up
+```
+
+The sync refuses to proceed unless the protected local files `.env`, `config\\github.env`, and `config\\gateway.env` already exist. It never copies the DPAPI secret store.
+
 ## Existing-install migration
 
 1. Copy this deployment source over the existing local deployment's non-secret files, preserving local `.env`, `config\github.env` and Cloudflare settings.
