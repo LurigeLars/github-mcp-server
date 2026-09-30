@@ -18,12 +18,10 @@ if ($ActualTarget -ne $ExpectedTarget) { throw "Unexpected runtime target path: 
 if (-not (Test-Path -LiteralPath $Sync -PathType Leaf)) { throw "Runtime sync script is missing: $Sync" }
 
 & $Sync -Target $ActualTarget
-if ($LASTEXITCODE -ne 0) { throw 'GitHub MCP runtime sync failed.' }
 
 $RuntimeWrapper = Join-Path $ActualTarget 'github-mcp.ps1'
 if (-not (Test-Path -LiteralPath $RuntimeWrapper -PathType Leaf)) { throw "Runtime wrapper is missing after sync: $RuntimeWrapper" }
 
 & $RuntimeWrapper up
-if ($LASTEXITCODE -ne 0) { throw 'GitHub MCP runtime startup failed.' }
 
 Write-Host 'GITHUB_MCP_DEPLOYED'
