@@ -1,7 +1,9 @@
 version: 2
 updates:
   - package-ecosystem: "docker-compose"
-    directory: "/deploy/local-gateway"
+    directories:
+      - "/deploy/local-gateway"
+      - "/deploy/local-gateway/test"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
