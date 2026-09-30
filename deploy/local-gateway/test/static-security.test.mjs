@@ -15,6 +15,7 @@ const gateway = read('public/gateway.mjs');
 const envExample = read('config/gateway.env.example');
 const runner = read('github-mcp.ps1');
 const syncRuntime = read('sync-runtime.ps1');
+const deployRuntime = read('deploy-runtime.ps1');
 const configure = read('scripts/configure_secrets.ps1');
 const smokeCompose = read('test/runtime-secret-smoke.compose.yaml');
 
@@ -84,6 +85,12 @@ test('runtime sync preserves local config and only copies tracked runtime files'
   assert.match(syncRuntime, /Copy-TrackedTree "scripts"/);
   assert.doesNotMatch(syncRuntime, /Remove-Item[\s\S]*\.env/);
   assert.doesNotMatch(syncRuntime, /Copy-Item[\s\S]*secrets\\/);
+});
+
+test('runtime deploy wrapper syncs tracked files before starting the runtime', () => {
+  assert.match(deployRuntime, /sync-runtime\.ps1/);
+  assert.match(deployRuntime, /RuntimeWrapper up/);
+  assert.match(deployRuntime, /Unexpected runtime target path/);
 });
 
 test('gateway config example contains no runtime credential key', () => {
