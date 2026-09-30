@@ -65,11 +65,13 @@ test('Windows runtime uses DPAPI and stdin injection rather than secret env', ()
   assert.doesNotMatch(runner, /-e\s+GITHUB_PERSONAL_ACCESS_TOKEN/);
 });
 
-test('every runtime secret import recreates the gateway first', () => {
-  assert.match(runner, /function Start-GatewayForSecretImport/);
+test('normal up is idempotent while explicit secret import forces gateway recreation', () => {
+  assert.match(runner, /function Start-GatewayForSecretImport\(\[switch\]\$ForceRecreate\)/);
+  assert.match(runner, /if \(-not \$ForceRecreate\)/);
+  assert.match(runner, /Where-Object \{ \$_ \}/);
   assert.match(runner, /up -d --force-recreate github-gateway/);
-  assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport/);
-  assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport/);
+  assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport\s*\n/);
+  assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport -ForceRecreate/);
 });
 
 test('runtime sync preserves local config and only copies tracked runtime files', () => {
