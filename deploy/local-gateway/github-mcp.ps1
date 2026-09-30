@@ -112,7 +112,7 @@ function Start-GatewayForSecretImport([switch]$ForceRecreate) {
   # consumed its tmpfs credentials into process memory, so recreating it on
   # every supervisor/ensure-up pass causes an unnecessary recreate loop.
   if (-not $ForceRecreate) {
-    $gatewayId = (& docker @Compose ps -q github-gateway).Trim()
+    $gatewayId = @(& docker @Compose ps -q github-gateway | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -First 1
     if ($gatewayId) {
       $health = (& docker inspect $gatewayId --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}').Trim()
       if ($LASTEXITCODE -eq 0 -and $health -eq 'healthy') {
