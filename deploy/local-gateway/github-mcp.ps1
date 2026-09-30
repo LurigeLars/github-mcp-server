@@ -103,14 +103,26 @@ function Wait-GatewayHealthy {
   throw 'GitHub gateway did not become healthy within 30 seconds.'
 }
 
-function Start-GatewayForSecretImport {
+function Start-GatewayForSecretImport([switch]$ForceRecreate) {
   Ensure-DedicatedEdgeNetwork
   & docker @Compose up -d github-mcp
   if ($LASTEXITCODE -ne 0) { throw 'GitHub MCP backend start failed.' }
 
-  # Always recreate the gateway before injecting credentials. The gateway
-  # consumes and unlinks the tmpfs files only during process startup, so
-  # injecting into an already-running gateway would leave plaintext files behind.
+  # Normal "up" is intentionally idempotent. A healthy gateway has already
+  # consumed its tmpfs credentials into process memory, so recreating it on
+  # every supervisor/ensure-up pass causes an unnecessary recreate loop.
+  if (-not $ForceRecreate) {
+    $gatewayId = (& docker @Compose ps -q github-gateway).Trim()
+    if ($gatewayId) {
+      $health = (& docker inspect $gatewayId --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}').Trim()
+      if ($LASTEXITCODE -eq 0 -and $health -eq 'healthy') {
+        return
+      }
+    }
+  }
+
+  # Explicit secret re-import, or recovery from a missing/unhealthy gateway,
+  # must recreate the process because credentials are consumed only at startup.
   & docker @Compose up -d --force-recreate github-gateway
   if ($LASTEXITCODE -ne 0) { throw 'GitHub gateway recreate failed.' }
 
@@ -134,7 +146,7 @@ switch ($Action) {
     if (-not (Test-Path -LiteralPath $PatPath -PathType Leaf)) {
       throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
     }
-    Start-GatewayForSecretImport
+    Start-GatewayForSecretImport -ForceRecreate
     Write-Host 'GITHUB_MCP_RUNTIME_SECRETS_IMPORTED'
   }
   'down' {
