@@ -7,12 +7,12 @@ on:
     paths:
       - "deploy/local-gateway/**"
       - ".github/workflows/**"
+  # Code-scanning merge protection requires fresh analysis on every PR.
+  # Do not path-filter pull requests or dependency-only/config PRs can be blocked
+  # waiting for a CodeQL result that was never scheduled.
   pull_request:
     branches:
       - main
-    paths:
-      - "deploy/local-gateway/**"
-      - ".github/workflows/**"
   schedule:
     - cron: "29 4 * * 1"
   workflow_dispatch:
