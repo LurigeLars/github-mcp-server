@@ -1,11 +1,41 @@
 // Shared response/request policy for public HTTP gateway and local stdio proxy.
 // GitHub Secret Scanning results are redacted before leaving this machine.
-// ChatGPT keeps the full previously selected GitHub capability surface; token
-// savings come from descriptor/schema compaction rather than hiding tools.
+// ChatGPT exposes a delta surface on top of the built-in GitHub connector.
+// Clear semantic duplicates stay available in the upstream runtime but are
+// hidden from tools/list here; unique local/security/admin capabilities remain.
 
 export const SECRET_SCANNING_TOOLS = new Set([
   'get_secret_scanning_alert',
   'list_secret_scanning_alerts',
+]);
+
+export const CHATGPT_HIDDEN_TOOLS = new Set([
+  // Built-in GitHub connector already covers these common CRUD/search flows.
+  'add_issue_comment',
+  'add_reply_to_pull_request_comment',
+  'create_branch',
+  'create_or_update_file',
+  'create_pull_request',
+  'delete_file',
+  'get_commit',
+  'get_file_contents',
+  'get_job_logs',
+  'get_me',
+  'issue_read',
+  'issue_write',
+  'list_commits',
+  'list_issues',
+  'list_pull_requests',
+  'merge_pull_request',
+  'pull_request_read',
+  'push_files',
+  'search_code',
+  'search_commits',
+  'search_issues',
+  'search_pull_requests',
+  'search_repositories',
+  'update_issue_comment',
+  'update_pull_request',
 ]);
 
 export const CHATGPT_DENIED_TOOLS = new Set([
@@ -196,7 +226,10 @@ function rewriteToolList(msg) {
   if (!Array.isArray(msg?.result?.tools)) return msg;
   const out = structuredClone(msg);
   out.result.tools = out.result.tools
-    .filter(tool => !CHATGPT_DENIED_TOOLS.has(tool?.name))
+    .filter(tool =>
+      !CHATGPT_DENIED_TOOLS.has(tool?.name) &&
+      !CHATGPT_HIDDEN_TOOLS.has(tool?.name)
+    )
     .map(annotateTool);
   return out;
 }
