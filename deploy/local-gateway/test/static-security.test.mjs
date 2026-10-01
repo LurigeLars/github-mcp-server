@@ -89,7 +89,7 @@ test('runtime sync preserves local config and only copies tracked runtime files'
 
 test('runtime deploy wrapper syncs tracked files before starting the runtime', () => {
   assert.match(deployRuntime, /sync-runtime\.ps1/);
-  assert.match(deployRuntime, /RuntimeWrapper up/);
+  assert.match(deployRuntime, /RuntimeWrapper import-secrets/);
   assert.match(deployRuntime, /Unexpected runtime target path/);
 });
 
