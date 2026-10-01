@@ -189,3 +189,27 @@ test('text resource inlining is scoped to own repos and leaves binary and large 
   const largeRewritten = JSON.parse(rewriteJsonText(largeTextResponse, new Set(), new Set()));
   assert.equal(largeRewritten.result.content[0].type, 'resource');
 });
+
+
+test('ChatGPT tool list hides built-in GitHub duplicates but keeps local delta tools', () => {
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 51,
+    result: {
+      tools: [
+        { name: 'create_branch', description: 'duplicate', inputSchema: { type: 'object' } },
+        { name: 'get_file_contents', description: 'duplicate', inputSchema: { type: 'object' } },
+        { name: 'search_issues', description: 'duplicate', inputSchema: { type: 'object' } },
+        { name: 'get_dependabot_alert', description: 'unique', inputSchema: { type: 'object' } },
+        { name: 'repository_ruleset_read', description: 'unique', inputSchema: { type: 'object' } },
+        { name: 'get_repository_tree', description: 'unique', inputSchema: { type: 'object' } },
+      ],
+    },
+  });
+
+  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), new Set()));
+  assert.deepEqual(
+    rewritten.result.tools.map(tool => tool.name),
+    ['get_dependabot_alert', 'repository_ruleset_read', 'get_repository_tree'],
+  );
+});
