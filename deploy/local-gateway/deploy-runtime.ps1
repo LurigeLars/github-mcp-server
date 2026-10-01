@@ -22,6 +22,6 @@ if (-not (Test-Path -LiteralPath $Sync -PathType Leaf)) { throw "Runtime sync sc
 $RuntimeWrapper = Join-Path $ActualTarget 'github-mcp.ps1'
 if (-not (Test-Path -LiteralPath $RuntimeWrapper -PathType Leaf)) { throw "Runtime wrapper is missing after sync: $RuntimeWrapper" }
 
-& $RuntimeWrapper up
+& $RuntimeWrapper import-secrets
 
 Write-Host 'GITHUB_MCP_DEPLOYED'
