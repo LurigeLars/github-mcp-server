@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  inlineTextResultIdsFromRequest,
-  rewriteJsonText,
-} from '../public/policy.mjs';
+import { rewriteJsonText } from '../public/policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
