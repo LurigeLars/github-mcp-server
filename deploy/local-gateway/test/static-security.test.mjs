@@ -75,6 +75,17 @@ test('normal up is idempotent while explicit secret import forces gateway recrea
   assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport -ForceRecreate/);
 });
 
+test('runtime supervisor restores the non-auto-restarting gateway after Docker restart', () => {
+  assert.match(compose, /restart:\s*"no"/);
+  assert.match(runner, /\$SupervisorConfigPath = Join-Path \$env:LOCALAPPDATA 'DockerLocalMCP\\runtime-supervisor\.local\.json'/);
+  assert.match(runner, /name = \$RuntimeName/);
+  assert.match(runner, /arguments = @\('up'\)/);
+  assert.match(runner, /container = \$GatewayContainer[\s\S]*require_healthy = \$true/);
+  assert.match(runner, /Update-RuntimeSupervisorConfig -Enabled \$true/);
+  assert.match(runner, /'down' \{[\s\S]*Update-RuntimeSupervisorConfig -Enabled \$false/);
+});
+
+
 test('runtime sync preserves local config and only copies tracked runtime files', () => {
   assert.match(syncRuntime, /protected = @\(/);
   assert.match(syncRuntime, /"\.env"/);
