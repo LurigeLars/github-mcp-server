@@ -22,6 +22,11 @@ $LegacyPaths = @(
 ) | Select-Object -Unique
 $Compose = @('compose', '--project-directory', $Root, '--env-file', (Join-Path $Root '.env'), '-f', (Join-Path $Root 'compose.yaml'))
 $EdgeNetwork = 'github-public_edge'
+$SupervisorConfigPath = Join-Path $env:LOCALAPPDATA 'DockerLocalMCP\runtime-supervisor.local.json'
+$RuntimeName = 'github-mcp-local'
+$BackendContainer = 'github-mcp-local-github-mcp-1'
+$GatewayContainer = 'github-mcp-local-github-gateway-1'
+$RuntimeScriptPath = (Resolve-Path -LiteralPath $PSCommandPath).Path
 
 function Ensure-DedicatedEdgeNetwork {
   & docker network inspect $EdgeNetwork *> $null
@@ -42,6 +47,60 @@ function Ensure-DedicatedEdgeNetwork {
     & docker network connect $EdgeNetwork $cloudflared[0]
     if ($LASTEXITCODE -ne 0) { throw "Failed to attach cloudflared to $EdgeNetwork." }
   }
+}
+
+function Update-RuntimeSupervisorConfig([bool]$Enabled = $true) {
+  if (-not (Test-Path -LiteralPath $SupervisorConfigPath -PathType Leaf)) {
+    Write-Warning 'Runtime supervisor config is unavailable; GitHub MCP restart recovery is not registered.'
+    return
+  }
+
+  $supervisor = Get-Content -LiteralPath $SupervisorConfigPath -Raw | ConvertFrom-Json
+  if ([int]$supervisor.version -ne 1) {
+    throw 'Unsupported runtime supervisor config version.'
+  }
+
+  $existing = @(
+    $supervisor.runtimes |
+      Where-Object { [string]$_.name -ne $RuntimeName }
+  )
+
+  $runtimeEntry = [pscustomobject]@{
+    name = $RuntimeName
+    enabled = $Enabled
+    event_containers = @(
+      $BackendContainer,
+      $GatewayContainer
+    )
+    health = [pscustomobject]@{
+      checks = @(
+        [pscustomobject]@{
+          container = $BackendContainer
+          require_healthy = $false
+          required_files = @()
+        },
+        [pscustomobject]@{
+          container = $GatewayContainer
+          require_healthy = $true
+          required_files = @()
+        }
+      )
+    }
+    recovery = [pscustomobject]@{
+      script = $RuntimeScriptPath
+      arguments = @('up')
+      working_directory = $Root
+    }
+    cooldown_seconds = 30
+    recovery_wait_seconds = 60
+  }
+
+  $supervisor.runtimes = @($existing + $runtimeEntry)
+  [IO.File]::WriteAllText(
+    $SupervisorConfigPath,
+    (($supervisor | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+    [Text.UTF8Encoding]::new($false)
+  )
 }
 
 function Wait-Docker([int]$Seconds) {
@@ -139,6 +198,7 @@ switch ($Action) {
       throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
     }
     Start-GatewayForSecretImport
+    Update-RuntimeSupervisorConfig -Enabled $true
     Write-Host 'GITHUB_MCP_UP'
   }
   'import-secrets' {
@@ -147,9 +207,11 @@ switch ($Action) {
       throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
     }
     Start-GatewayForSecretImport -ForceRecreate
+    Update-RuntimeSupervisorConfig -Enabled $true
     Write-Host 'GITHUB_MCP_RUNTIME_SECRETS_IMPORTED'
   }
   'down' {
+    Update-RuntimeSupervisorConfig -Enabled $false
     & docker @Compose down
     if ($LASTEXITCODE -ne 0) { throw 'docker compose down failed.' }
   }
