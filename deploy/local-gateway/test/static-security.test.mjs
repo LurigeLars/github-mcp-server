@@ -15,6 +15,7 @@ const gateway = read('public/gateway.mjs');
 const envExample = read('config/gateway.env.example');
 const runner = read('github-mcp.ps1');
 const syncRuntime = read('sync-runtime.ps1');
+const deployRuntime = read('deploy-runtime.ps1');
 const configure = read('scripts/configure_secrets.ps1');
 const smokeCompose = read('test/runtime-secret-smoke.compose.yaml');
 
@@ -65,12 +66,25 @@ test('Windows runtime uses DPAPI and stdin injection rather than secret env', ()
   assert.doesNotMatch(runner, /-e\s+GITHUB_PERSONAL_ACCESS_TOKEN/);
 });
 
-test('every runtime secret import recreates the gateway first', () => {
-  assert.match(runner, /function Start-GatewayForSecretImport/);
+test('normal up is idempotent while explicit secret import forces gateway recreation', () => {
+  assert.match(runner, /function Start-GatewayForSecretImport\(\[switch\]\$ForceRecreate\)/);
+  assert.match(runner, /if \(-not \$ForceRecreate\)/);
+  assert.match(runner, /Where-Object \{ \$_ \}/);
   assert.match(runner, /up -d --force-recreate github-gateway/);
-  assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport/);
-  assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport/);
+  assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport\s*\n/);
+  assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport -ForceRecreate/);
 });
+
+test('runtime supervisor restores the non-auto-restarting gateway after Docker restart', () => {
+  assert.match(compose, /restart:\s*"no"/);
+  assert.match(runner, /\$SupervisorConfigPath = Join-Path \$env:LOCALAPPDATA 'DockerLocalMCP\\runtime-supervisor\.local\.json'/);
+  assert.match(runner, /name = \$RuntimeName/);
+  assert.match(runner, /arguments = @\('up'\)/);
+  assert.match(runner, /container = \$GatewayContainer[\s\S]*require_healthy = \$true/);
+  assert.match(runner, /Update-RuntimeSupervisorConfig -Enabled \$true/);
+  assert.match(runner, /'down' \{[\s\S]*Update-RuntimeSupervisorConfig -Enabled \$false/);
+});
+
 
 test('runtime sync preserves local config and only copies tracked runtime files', () => {
   assert.match(syncRuntime, /protected = @\(/);
@@ -82,6 +96,12 @@ test('runtime sync preserves local config and only copies tracked runtime files'
   assert.match(syncRuntime, /Copy-TrackedTree "scripts"/);
   assert.doesNotMatch(syncRuntime, /Remove-Item[\s\S]*\.env/);
   assert.doesNotMatch(syncRuntime, /Copy-Item[\s\S]*secrets\\/);
+});
+
+test('runtime deploy wrapper syncs tracked files before starting the runtime', () => {
+  assert.match(deployRuntime, /sync-runtime\.ps1/);
+  assert.match(deployRuntime, /RuntimeWrapper import-secrets/);
+  assert.match(deployRuntime, /Unexpected runtime target path/);
 });
 
 test('gateway config example contains no runtime credential key', () => {
@@ -179,4 +199,28 @@ test('text resource inlining is scoped to own repos and leaves binary and large 
   });
   const largeRewritten = JSON.parse(rewriteJsonText(largeTextResponse, new Set(), new Set()));
   assert.equal(largeRewritten.result.content[0].type, 'resource');
+});
+
+
+test('ChatGPT tool list hides built-in GitHub duplicates but keeps local delta tools', () => {
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 51,
+    result: {
+      tools: [
+        { name: 'create_branch', description: 'duplicate', inputSchema: { type: 'object' } },
+        { name: 'get_file_contents', description: 'duplicate', inputSchema: { type: 'object' } },
+        { name: 'search_issues', description: 'duplicate', inputSchema: { type: 'object' } },
+        { name: 'get_dependabot_alert', description: 'unique', inputSchema: { type: 'object' } },
+        { name: 'repository_ruleset_read', description: 'unique', inputSchema: { type: 'object' } },
+        { name: 'get_repository_tree', description: 'unique', inputSchema: { type: 'object' } },
+      ],
+    },
+  });
+
+  const rewritten = JSON.parse(rewriteJsonText(response, new Set(), new Set()));
+  assert.deepEqual(
+    rewritten.result.tools.map(tool => tool.name),
+    ['get_dependabot_alert', 'repository_ruleset_read', 'get_repository_tree'],
+  );
 });

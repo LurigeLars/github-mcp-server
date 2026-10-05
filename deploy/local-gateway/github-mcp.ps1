@@ -22,6 +22,11 @@ $LegacyPaths = @(
 ) | Select-Object -Unique
 $Compose = @('compose', '--project-directory', $Root, '--env-file', (Join-Path $Root '.env'), '-f', (Join-Path $Root 'compose.yaml'))
 $EdgeNetwork = 'github-public_edge'
+$SupervisorConfigPath = Join-Path $env:LOCALAPPDATA 'DockerLocalMCP\runtime-supervisor.local.json'
+$RuntimeName = 'github-mcp-local'
+$BackendContainer = 'github-mcp-local-github-mcp-1'
+$GatewayContainer = 'github-mcp-local-github-gateway-1'
+$RuntimeScriptPath = (Resolve-Path -LiteralPath $PSCommandPath).Path
 
 function Ensure-DedicatedEdgeNetwork {
   & docker network inspect $EdgeNetwork *> $null
@@ -42,6 +47,60 @@ function Ensure-DedicatedEdgeNetwork {
     & docker network connect $EdgeNetwork $cloudflared[0]
     if ($LASTEXITCODE -ne 0) { throw "Failed to attach cloudflared to $EdgeNetwork." }
   }
+}
+
+function Update-RuntimeSupervisorConfig([bool]$Enabled = $true) {
+  if (-not (Test-Path -LiteralPath $SupervisorConfigPath -PathType Leaf)) {
+    Write-Warning 'Runtime supervisor config is unavailable; GitHub MCP restart recovery is not registered.'
+    return
+  }
+
+  $supervisor = Get-Content -LiteralPath $SupervisorConfigPath -Raw | ConvertFrom-Json
+  if ([int]$supervisor.version -ne 1) {
+    throw 'Unsupported runtime supervisor config version.'
+  }
+
+  $existing = @(
+    $supervisor.runtimes |
+      Where-Object { [string]$_.name -ne $RuntimeName }
+  )
+
+  $runtimeEntry = [pscustomobject]@{
+    name = $RuntimeName
+    enabled = $Enabled
+    event_containers = @(
+      $BackendContainer,
+      $GatewayContainer
+    )
+    health = [pscustomobject]@{
+      checks = @(
+        [pscustomobject]@{
+          container = $BackendContainer
+          require_healthy = $false
+          required_files = @()
+        },
+        [pscustomobject]@{
+          container = $GatewayContainer
+          require_healthy = $true
+          required_files = @()
+        }
+      )
+    }
+    recovery = [pscustomobject]@{
+      script = $RuntimeScriptPath
+      arguments = @('up')
+      working_directory = $Root
+    }
+    cooldown_seconds = 30
+    recovery_wait_seconds = 60
+  }
+
+  $supervisor.runtimes = @($existing + $runtimeEntry)
+  [IO.File]::WriteAllText(
+    $SupervisorConfigPath,
+    (($supervisor | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+    [Text.UTF8Encoding]::new($false)
+  )
 }
 
 function Wait-Docker([int]$Seconds) {
@@ -103,14 +162,26 @@ function Wait-GatewayHealthy {
   throw 'GitHub gateway did not become healthy within 30 seconds.'
 }
 
-function Start-GatewayForSecretImport {
+function Start-GatewayForSecretImport([switch]$ForceRecreate) {
   Ensure-DedicatedEdgeNetwork
   & docker @Compose up -d github-mcp
   if ($LASTEXITCODE -ne 0) { throw 'GitHub MCP backend start failed.' }
 
-  # Always recreate the gateway before injecting credentials. The gateway
-  # consumes and unlinks the tmpfs files only during process startup, so
-  # injecting into an already-running gateway would leave plaintext files behind.
+  # Normal "up" is intentionally idempotent. A healthy gateway has already
+  # consumed its tmpfs credentials into process memory, so recreating it on
+  # every supervisor/ensure-up pass causes an unnecessary recreate loop.
+  if (-not $ForceRecreate) {
+    $gatewayId = @(& docker @Compose ps -q github-gateway | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -First 1
+    if ($gatewayId) {
+      $health = (& docker inspect $gatewayId --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}').Trim()
+      if ($LASTEXITCODE -eq 0 -and $health -eq 'healthy') {
+        return
+      }
+    }
+  }
+
+  # Explicit secret re-import, or recovery from a missing/unhealthy gateway,
+  # must recreate the process because credentials are consumed only at startup.
   & docker @Compose up -d --force-recreate github-gateway
   if ($LASTEXITCODE -ne 0) { throw 'GitHub gateway recreate failed.' }
 
@@ -127,6 +198,7 @@ switch ($Action) {
       throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
     }
     Start-GatewayForSecretImport
+    Update-RuntimeSupervisorConfig -Enabled $true
     Write-Host 'GITHUB_MCP_UP'
   }
   'import-secrets' {
@@ -134,10 +206,12 @@ switch ($Action) {
     if (-not (Test-Path -LiteralPath $PatPath -PathType Leaf)) {
       throw 'GitHub PAT DPAPI secret is missing. Run .\scripts\configure_secrets.ps1 first.'
     }
-    Start-GatewayForSecretImport
+    Start-GatewayForSecretImport -ForceRecreate
+    Update-RuntimeSupervisorConfig -Enabled $true
     Write-Host 'GITHUB_MCP_RUNTIME_SECRETS_IMPORTED'
   }
   'down' {
+    Update-RuntimeSupervisorConfig -Enabled $false
     & docker @Compose down
     if ($LASTEXITCODE -ne 0) { throw 'docker compose down failed.' }
   }

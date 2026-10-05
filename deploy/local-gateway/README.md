@@ -74,6 +74,24 @@ Dependabot opens PRs for supported updates; it does not auto-merge them. Overlay
 The source of truth for the deployed image version and digest remains `compose.yaml`.
 
 
+## ChatGPT delta tool surface
+
+ChatGPT already has a first-party GitHub connector. The local gateway therefore exposes only the
+useful delta from the upstream GitHub MCP server instead of presenting two equivalent toolsets.
+
+- Common repository CRUD/search operations remain implemented upstream but are filtered from
+  `tools/list` for ChatGPT when the built-in connector already owns the same capability.
+- The hidden tools are **not deleted or denied** by the local policy; other local/upstream use
+  remains intact.
+- Local tools stay visible when they add distinct capability, especially GitHub Actions control,
+  Dependabot/CodeQL/secret-scanning/security advisories, repository rulesets, releases/tags,
+  discussions, teams, Copilot actions, repository trees and other gaps in the built-in connector.
+- If the built-in GitHub connector materially changes its tool surface, review the delta list rather
+  than automatically exposing duplicate tools again.
+
+This is a tool-discovery optimization, not a security boundary. `CHATGPT_DENIED_TOOLS` remains the
+separate policy for capabilities that must actually be blocked.
+
 ## ChatGPT text-file materialization
 
 For `get_file_contents` calls targeting repositories owned by `LurigeLars`, the gateway converts upstream MCP embedded **text** resources into ordinary MCP text content before returning the response to ChatGPT. This avoids the per-conversation attachment-materialization prompt for small text files while keeping the official GitHub MCP server unchanged.
