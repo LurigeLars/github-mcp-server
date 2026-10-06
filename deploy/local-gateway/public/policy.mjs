@@ -9,6 +9,11 @@ export const SECRET_SCANNING_TOOLS = new Set([
   'list_secret_scanning_alerts',
 ]);
 
+export const SECURITY_ALERT_LIST_TOOLS = new Set([
+  'list_code_scanning_alerts',
+  'list_secret_scanning_alerts',
+]);
+
 export const CHATGPT_HIDDEN_TOOLS = new Set([
   // Built-in GitHub connector already covers these common CRUD/search flows.
   'add_issue_comment',
@@ -90,6 +95,18 @@ export function secretResultIdsFromRequest(msg) {
   for (const m of [msg].flat()) {
     if (m?.method === 'tools/call' &&
         SECRET_SCANNING_TOOLS.has(m?.params?.name) &&
+        m.id !== undefined) {
+      ids.add(m.id);
+    }
+  }
+  return ids;
+}
+
+export function securityAlertListResultIdsFromRequest(msg) {
+  const ids = new Set();
+  for (const m of [msg].flat()) {
+    if (m?.method === 'tools/call' &&
+        SECURITY_ALERT_LIST_TOOLS.has(m?.params?.name) &&
         m.id !== undefined) {
       ids.add(m.id);
     }
