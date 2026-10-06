@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { rewriteJsonText } from '../public/policy.mjs';
+import {
+  rewriteJsonText,
+  secretResultIdsFromRequest,
+  securityAlertListResultIdsFromRequest,
+} from '../public/policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -220,4 +224,100 @@ test('ChatGPT tool list hides built-in GitHub duplicates but keeps local delta t
     rewritten.result.tools.map(tool => tool.name),
     ['get_dependabot_alert', 'repository_ruleset_read', 'get_repository_tree'],
   );
+});
+
+test('code scanning list results are normalized to a stable alerts object', () => {
+  const request = {
+    jsonrpc: '2.0',
+    id: 61,
+    method: 'tools/call',
+    params: {
+      name: 'list_code_scanning_alerts',
+      arguments: { owner: 'LurigeLars', repo: 'InfluencerResearch', state: 'open' },
+    },
+  };
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 61,
+    result: {
+      content: [{
+        type: 'text',
+        text: JSON.stringify([{ number: 274, rule: { id: 'py/unused-import' } }]),
+      }],
+      isError: false,
+    },
+  });
+
+  const alertListIds = securityAlertListResultIdsFromRequest(request);
+  const rewritten = JSON.parse(
+    rewriteJsonText(response, new Set(), new Set(), alertListIds),
+  );
+  assert.deepEqual(JSON.parse(rewritten.result.content[0].text), {
+    alerts: [{ number: 274, rule: { id: 'py/unused-import' } }],
+  });
+});
+
+test('secret scanning list normalization preserves local secret redaction', () => {
+  const request = {
+    jsonrpc: '2.0',
+    id: 62,
+    method: 'tools/call',
+    params: {
+      name: 'list_secret_scanning_alerts',
+      arguments: { owner: 'LurigeLars', repo: 'example', state: 'open' },
+    },
+  };
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 62,
+    result: {
+      content: [{
+        type: 'text',
+        text: JSON.stringify([{ number: 1, secret: 'do-not-leak' }]),
+      }],
+      isError: false,
+    },
+  });
+
+  const secretIds = secretResultIdsFromRequest(request);
+  const alertListIds = securityAlertListResultIdsFromRequest(request);
+  const rewritten = JSON.parse(
+    rewriteJsonText(response, secretIds, new Set(), alertListIds),
+  );
+  assert.deepEqual(JSON.parse(rewritten.result.content[0].text), {
+    alerts: [{ number: 1, secret: '[REDACTED_BY_LOCAL_GATEWAY]' }],
+  });
+});
+
+test('dependabot alert list objects are not rewritten', () => {
+  const request = {
+    jsonrpc: '2.0',
+    id: 63,
+    method: 'tools/call',
+    params: {
+      name: 'list_dependabot_alerts',
+      arguments: { owner: 'LurigeLars', repo: 'camofox-browser', state: 'open' },
+    },
+  };
+  const response = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 63,
+    result: {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ alerts: [{ number: 16 }], pageInfo: { hasNextPage: false } }),
+      }],
+      isError: false,
+    },
+  });
+
+  const alertListIds = securityAlertListResultIdsFromRequest(request);
+  assert.equal(alertListIds.size, 0);
+  const rewritten = JSON.parse(
+    rewriteJsonText(response, new Set(), new Set(), alertListIds),
+  );
+  assert.deepEqual(JSON.parse(rewritten.result.content[0].text), {
+    alerts: [{ number: 16 }],
+    pageInfo: { hasNextPage: false },
+  });
 });
