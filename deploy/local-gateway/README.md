@@ -86,6 +86,9 @@ useful delta from the upstream GitHub MCP server instead of presenting two equiv
 - Local tools stay visible when they add distinct capability, especially GitHub Actions control,
   Dependabot/CodeQL/secret-scanning/security advisories, repository rulesets, releases/tags,
   discussions, teams, Copilot actions, repository trees and other gaps in the built-in connector.
+- For ChatGPT-facing security audits, the gateway normalizes the upstream bare-array results from
+  `list_code_scanning_alerts` and `list_secret_scanning_alerts` to the stable
+  `{"alerts":[...]}` shape already used by Dependabot responses.
 - If the built-in GitHub connector materially changes its tool surface, review the delta list rather
   than automatically exposing duplicate tools again.
 
