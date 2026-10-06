@@ -273,13 +273,36 @@ function inlineEmbeddedTextResources(msg) {
   return out;
 }
 
-export function rewriteResponse(msg, secretIds, inlineTextIds) {
+function normalizeSecurityAlertListResult(msg, alertListIds) {
+  if (!alertListIds?.has(msg?.id) || !Array.isArray(msg?.result?.content)) return msg;
+
+  let changed = false;
+  const content = msg.result.content.map(item => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return item;
+    try {
+      const parsed = JSON.parse(item.text);
+      if (!Array.isArray(parsed)) return item;
+      changed = true;
+      return { ...item, text: JSON.stringify({ alerts: parsed }) };
+    } catch {
+      return item;
+    }
+  });
+
+  if (!changed) return msg;
+  const out = structuredClone(msg);
+  out.result.content = content;
+  return out;
+}
+
+export function rewriteResponse(msg, secretIds, inlineTextIds, alertListIds) {
   if (!msg || typeof msg !== 'object') return msg;
 
   let out = rewriteToolList(msg);
   // Tool results may arrive on a different Streamable HTTP/SSE response than
   // the request that initiated them, so normalize from the trusted repo URI.
   out = inlineEmbeddedTextResources(out);
+  out = normalizeSecurityAlertListResult(out, alertListIds);
 
   if (!secretIds?.has(out.id)) return out;
 
@@ -299,21 +322,21 @@ export function rewriteResponse(msg, secretIds, inlineTextIds) {
   return out;
 }
 
-export function rewriteJsonText(text, secretIds, inlineTextIds) {
+export function rewriteJsonText(text, secretIds, inlineTextIds, alertListIds) {
   try {
     const parsed = JSON.parse(text);
     const rewritten = Array.isArray(parsed)
-      ? parsed.map(m => rewriteResponse(m, secretIds, inlineTextIds))
-      : rewriteResponse(parsed, secretIds, inlineTextIds);
+      ? parsed.map(m => rewriteResponse(m, secretIds, inlineTextIds, alertListIds))
+      : rewriteResponse(parsed, secretIds, inlineTextIds, alertListIds);
     return JSON.stringify(rewritten);
   } catch {
     return text;
   }
 }
 
-export function rewriteSseLine(line, secretIds, inlineTextIds) {
+export function rewriteSseLine(line, secretIds, inlineTextIds, alertListIds) {
   if (!line.startsWith('data:')) return line;
   const raw = line.slice(5).trimStart();
-  const rewritten = rewriteJsonText(raw, secretIds, inlineTextIds);
+  const rewritten = rewriteJsonText(raw, secretIds, inlineTextIds, alertListIds);
   return 'data: ' + rewritten;
 }
