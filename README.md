@@ -19,13 +19,13 @@ maintenance branch.
 
 The local deployment still needs infrastructure around it:
 
-- an immutable reviewed upstream image pin;
-- secure local storage for the GitHub credential;
-- runtime-only credential injection;
-- a cloud-facing authentication/policy boundary;
-- a private backend network;
-- container hardening;
-- deployment/update scripts;
+- an immutable reviewed upstream image pin.
+- secure local storage for the GitHub credential.
+- runtime-only credential injection.
+- a cloud-facing authentication/policy boundary.
+- a private backend network.
+- container hardening.
+- deployment/update scripts.
 - CI that tests the overlay itself.
 
 That is the scope of this repository.
@@ -103,15 +103,15 @@ rehydration.
 
 The maintained deployment uses several independent controls:
 
-- official GitHub MCP backend pinned by release **and immutable image digest**;
-- explicit non-root users for backend and gateway;
-- read-only filesystems where practical;
-- dropped Linux capabilities and `no-new-privileges`;
-- private backend Docker network;
-- Cloudflare Access in front of the public path;
-- independent Access JWT/audience/identity validation in the gateway;
-- client credentials stripped before forwarding;
-- GitHub PAT injected through DPAPI -> stdin -> tmpfs;
+- official GitHub MCP backend pinned by release **and immutable image digest**.
+- explicit non-root users for backend and gateway.
+- read-only filesystems where practical.
+- dropped Linux capabilities and `no-new-privileges`.
+- private backend Docker network.
+- Cloudflare Access in front of the public path.
+- independent Access JWT/audience/identity validation in the gateway.
+- client credentials stripped before forwarding.
+- GitHub PAT injected through DPAPI -> stdin -> tmpfs.
 - local deployment identifiers and credentials kept outside Git.
 
 The canonical runtime pin is always the image reference in
@@ -126,8 +126,8 @@ from the local MCP produces duplicate choices without adding capability.
 
 The gateway therefore presents a **delta tool surface** to ChatGPT:
 
-- overlapping common repository operations can be hidden from `tools/list`;
-- upstream tools remain implemented and usable by other local clients;
+- overlapping common repository operations can be hidden from `tools/list`.
+- upstream tools remain implemented and usable by other local clients.
 - distinct capabilities such as Actions control, security scanning, rulesets, releases,
   discussions, teams and other connector gaps can remain visible;
 - actual denied tools are controlled separately from discovery filtering.
@@ -193,9 +193,9 @@ copying upstream server source into the repository.
 
 The main validation workflows are:
 
-- `overlay-ci.yml` — validates the thin-overlay model and gateway behavior;
-- `local-gateway-security.yml` — tests runtime-secret, Docker and Windows DPAPI boundaries;
-- `static-analysis.yml` — shell/PowerShell/workflow/static checks;
+- `overlay-ci.yml` — validates the thin-overlay model and gateway behavior.
+- `local-gateway-security.yml` — tests runtime-secret, Docker and Windows DPAPI boundaries.
+- `static-analysis.yml` — shell/PowerShell/workflow/static checks.
 - `codeql.yml` — CodeQL for the languages present in the overlay.
 
 Updates are reviewed through pull requests and are not auto-merged.
