@@ -41,6 +41,9 @@ jobs:
           node --check deploy/local-gateway/local-mcp/stdio-proxy.mjs
           node --test deploy/local-gateway/test/static-security.test.mjs deploy/local-gateway/test/local-stdio-proxy.test.mjs
 
+      - name: Check upstream tool inventory against gateway policy
+        run: node --test deploy/local-gateway/test/upstream-tool-inventory.test.mjs
+
       - name: Exercise isolated stdin-to-tmpfs runtime injection
         shell: bash
         run: |
