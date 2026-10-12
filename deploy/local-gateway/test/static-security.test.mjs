@@ -4,6 +4,8 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   rewriteJsonText,
+  rewriteLocalClientResponse,
+  rewriteSseLine,
   secretResultIdsFromRequest,
   securityAlertListResultIdsFromRequest,
 } from '../public/policy.mjs';
@@ -321,4 +323,66 @@ test('dependabot alert list objects are not rewritten', () => {
     alerts: [{ number: 16 }],
     pageInfo: { hasNextPage: false },
   });
+});
+
+// github-mcp-server v2 can return typed results in structuredContent next to the text
+// content. A secret must not survive in either representation, on any transport.
+const structuredSecretRequest = {
+  jsonrpc: '2.0',
+  id: 71,
+  method: 'tools/call',
+  params: {
+    name: 'get_secret_scanning_alert',
+    arguments: { owner: 'LurigeLars', repo: 'example', alertNumber: 1 },
+  },
+};
+const structuredSecretPayload = {
+  number: 1,
+  secret: 'do-not-leak-top-level',
+  locations: [{ path: 'a.env', details: { Secret: 'do-not-leak-nested' } }],
+};
+const structuredSecretResponse = () => ({
+  jsonrpc: '2.0',
+  id: 71,
+  result: {
+    content: [{ type: 'text', text: JSON.stringify(structuredSecretPayload) }],
+    structuredContent: structuredClone(structuredSecretPayload),
+    isError: false,
+  },
+});
+const redactedStructuredPayload = {
+  number: 1,
+  secret: '[REDACTED_BY_LOCAL_GATEWAY]',
+  locations: [{ path: 'a.env', details: { Secret: '[REDACTED_BY_LOCAL_GATEWAY]' } }],
+};
+
+function assertStructuredSecretRedacted(rewritten) {
+  assert.deepEqual(rewritten.result.structuredContent, redactedStructuredPayload);
+  assert.deepEqual(JSON.parse(rewritten.result.content[0].text), redactedStructuredPayload);
+  assert.equal(JSON.stringify(rewritten).includes('do-not-leak'), false);
+}
+
+test('secret scanning structuredContent is redacted on the public JSON path', () => {
+  const secretIds = secretResultIdsFromRequest(structuredSecretRequest);
+  assertStructuredSecretRedacted(JSON.parse(
+    rewriteJsonText(JSON.stringify(structuredSecretResponse()), secretIds, new Set(), new Set()),
+  ));
+});
+
+test('secret scanning structuredContent is redacted on the public SSE path', () => {
+  const secretIds = secretResultIdsFromRequest(structuredSecretRequest);
+  const line = rewriteSseLine('data: ' + JSON.stringify(structuredSecretResponse()), secretIds, new Set(), new Set());
+  assert.equal(line.startsWith('data: '), true);
+  assertStructuredSecretRedacted(JSON.parse(line.slice(6)));
+});
+
+test('secret scanning structuredContent is redacted for local stdio clients', () => {
+  const secretIds = secretResultIdsFromRequest(structuredSecretRequest);
+  assertStructuredSecretRedacted(rewriteLocalClientResponse(structuredSecretResponse(), secretIds));
+});
+
+test('structuredContent of other tools is passed through unchanged', () => {
+  const response = structuredSecretResponse();
+  const rewritten = JSON.parse(rewriteJsonText(JSON.stringify(response), new Set(), new Set(), new Set()));
+  assert.deepEqual(rewritten.result.structuredContent, structuredSecretPayload);
 });
