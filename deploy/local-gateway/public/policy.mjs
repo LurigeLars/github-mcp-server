@@ -304,9 +304,13 @@ export function rewriteResponse(msg, secretIds, inlineTextIds, alertListIds) {
   out = inlineEmbeddedTextResources(out);
   out = normalizeSecurityAlertListResult(out, alertListIds);
 
-  if (!secretIds?.has(out.id)) return out;
+  return redactSecretScanningResult(out, msg, secretIds);
+}
 
-  if (out === msg) out = structuredClone(msg);
+function redactSecretScanningResult(out, original, secretIds) {
+  if (!secretIds?.has(out?.id)) return out;
+
+  if (out === original) out = structuredClone(original);
 
   if (Array.isArray(out?.result?.content)) {
     out.result.content = out.result.content.map(item =>
@@ -320,6 +324,22 @@ export function rewriteResponse(msg, secretIds, inlineTextIds, alertListIds) {
     out.result.structuredContent = redactSecretKeys(out.result.structuredContent);
   }
   return out;
+}
+
+// Local stdio clients (Claude, Codex) have no first-party GitHub connector to
+// deduplicate against, so they get the full upstream tool surface. Only the
+// security policy is shared with the gateway: denied tools stay hidden and
+// Secret Scanning values stay redacted. ChatGPT discovery hiding, description
+// compaction and resource inlining are deliberately not applied here.
+export function rewriteLocalClientResponse(msg, secretIds) {
+  if (!msg || typeof msg !== 'object') return msg;
+
+  let out = msg;
+  if (Array.isArray(msg?.result?.tools)) {
+    out = structuredClone(msg);
+    out.result.tools = out.result.tools.filter(tool => !CHATGPT_DENIED_TOOLS.has(tool?.name));
+  }
+  return redactSecretScanningResult(out, msg, secretIds);
 }
 
 export function rewriteJsonText(text, secretIds, inlineTextIds, alertListIds) {

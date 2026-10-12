@@ -95,6 +95,7 @@ test('runtime sync preserves local config and only copies tracked runtime files'
   assert.match(syncRuntime, /Copy-TrackedFile/);
   assert.match(syncRuntime, /Copy-TrackedTree "public"/);
   assert.match(syncRuntime, /Copy-TrackedTree "scripts"/);
+  assert.match(syncRuntime, /Copy-TrackedTree "local-mcp"/);
   assert.doesNotMatch(syncRuntime, /Remove-Item[\s\S]*\.env/);
   assert.doesNotMatch(syncRuntime, /Copy-Item[\s\S]*secrets\\/);
 });

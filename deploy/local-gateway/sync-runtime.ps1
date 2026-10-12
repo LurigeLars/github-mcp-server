@@ -62,6 +62,7 @@ foreach ($relative in @(
 }
 Copy-TrackedTree "public"
 Copy-TrackedTree "scripts"
+Copy-TrackedTree "local-mcp"
 
 foreach ($relative in $protected) {
     if (-not (Test-Path -LiteralPath (Join-Path $Target $relative) -PathType Leaf)) {

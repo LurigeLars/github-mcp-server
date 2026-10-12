@@ -37,7 +37,9 @@ jobs:
         run: |
           node --check deploy/local-gateway/public/gateway.mjs
           node --check deploy/local-gateway/public/policy.mjs
-          node --test deploy/local-gateway/test/static-security.test.mjs
+          node --check deploy/local-gateway/local-mcp/bridge.mjs
+          node --check deploy/local-gateway/local-mcp/stdio-proxy.mjs
+          node --test deploy/local-gateway/test/static-security.test.mjs deploy/local-gateway/test/local-stdio-proxy.test.mjs
 
       - name: Exercise isolated stdin-to-tmpfs runtime injection
         shell: bash
