@@ -60,6 +60,28 @@ From this directory:
 
 Use `test` after deployment changes or upstream image updates.
 
+## Local stdio clients (Claude Code, Claude Desktop, Codex)
+
+`local-mcp/stdio-proxy.mjs` serves local MCP clients without touching the gateway, its tmpfs import or the private backend network:
+
+```text
+local client --stdio--> stdio-proxy.mjs --HTTP 127.0.0.1--> ephemeral github-mcp container
+```
+
+- The proxy reads the PAT with the existing `Read-DpapiSecret` in a child `pwsh` and keeps it in process memory only.
+- The ephemeral backend uses the exact image pin from `compose.yaml`, runs in HTTP mode with the same hardening, publishes only on `127.0.0.1` and gets the PAT solely as a per-request `Authorization` header. It is never in a file, command-line argument, Docker `.Config.Env` or log.
+- Local clients see the full upstream tool surface. The ChatGPT discovery hiding is not applied because local clients have no first-party GitHub connector to deduplicate against. Denied tools, the `LurigeLars` write-owner restriction and Secret Scanning redaction from `public/policy.mjs` still apply.
+- Each proxy owns one labelled container, removes it on exit and removes orphans left by dead proxy processes.
+
+Register the runtime copy (after `sync-runtime.ps1`) in each client:
+
+```text
+command: node
+args:    <runtime-root>\local-mcp\stdio-proxy.mjs
+```
+
+Requires Docker Desktop, Node.js 20+ and PowerShell 7 (`pwsh`) on `PATH`.
+
 ## Upstream and dependency updates
 
 The root `.github/dependabot.yml` checks Compose dependencies weekly. This includes:

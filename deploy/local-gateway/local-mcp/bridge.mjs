@@ -1,0 +1,154 @@
+// Pure building blocks for the local stdio proxy (Claude Code, Claude Desktop, Codex).
+// No process, Docker or secret-store side effects live here so they can be tested in CI.
+
+import {
+  checkRequestPolicy,
+  rewriteLocalClientResponse,
+  secretResultIdsFromRequest,
+} from '../public/policy.mjs';
+
+export const LOCAL_CONTAINER_LABEL = 'com.lurigelars.github-mcp-local.stdio';
+export const LOCAL_OWNER_PID_LABEL = 'com.lurigelars.github-mcp-local.stdio.owner-pid';
+export const BACKEND_PORT = 8082;
+
+// The pinned official image is read from compose.yaml so the local proxy can never
+// drift from the deployed gateway backend.
+export function parsePinnedImage(composeText) {
+  const match = /^\s*image:\s*(ghcr\.io\/github\/github-mcp-server:v[^@\s]+@sha256:[0-9a-f]{64})\s*$/m.exec(composeText);
+  if (!match) throw new Error('compose.yaml does not contain a pinned official github-mcp-server image');
+  return match[1];
+}
+
+// The GitHub PAT is deliberately absent: the backend runs in HTTP mode and receives
+// the token only as a per-request Authorization header from this process.
+export function buildDockerRunArgs({ image, configFile, name, ownerPid }) {
+  return [
+    'run', '-d', '--rm',
+    '--name', name,
+    '--label', `${LOCAL_CONTAINER_LABEL}=1`,
+    '--label', `${LOCAL_OWNER_PID_LABEL}=${ownerPid}`,
+    '--publish', `127.0.0.1::${BACKEND_PORT}`,
+    '--user', '65532:65532',
+    '--read-only',
+    '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '--pids-limit', '100',
+    '--memory', '512m',
+    '--cpus', '1.0',
+    '--env-file', configFile,
+    image,
+    'http',
+    `--port=${BACKEND_PORT}`,
+    '--listen-host=0.0.0.0',
+  ];
+}
+
+export function parseDockerPort(output) {
+  for (const line of String(output).split(/\r?\n/)) {
+    const m = /^127\.0\.0\.1:(\d+)\s*$/.exec(line.trim());
+    if (m) return Number(m[1]);
+  }
+  throw new Error('local GitHub MCP backend is not published on 127.0.0.1');
+}
+
+export function validateRuntimeToken(raw) {
+  const value = String(raw ?? '').trim();
+  if (value.length < 20 || value.length > 4096 || /[\s]/.test(value)) {
+    throw new Error('DPAPI-protected GitHub PAT is missing or invalid');
+  }
+  return value;
+}
+
+const rpcError = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
+
+function parseSseMessages(text) {
+  const out = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).replace(/^ /, ''))
+      .join('\n');
+    if (!data) continue;
+    try {
+      out.push(JSON.parse(data));
+    } catch {
+      // ignore non-JSON SSE payloads such as keep-alives
+    }
+  }
+  return out;
+}
+
+// Creates a line handler that forwards one JSON-RPC message (or batch) per line to the
+// stateless upstream Streamable HTTP endpoint and writes rewritten responses to `emit`.
+export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, timeoutMs = 330_000 }) {
+  let protocolVersion = null;
+
+  return async function handleLine(line) {
+    if (!line.trim()) return;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      emit(rpcError(null, -32700, 'parse error'));
+      return;
+    }
+
+    const messages = [parsed].flat();
+    const requestIds = messages.filter(m => m && m.id !== undefined && m.method).map(m => m.id);
+
+    const violation = checkRequestPolicy(parsed);
+    if (violation) {
+      for (const id of requestIds) emit(rpcError(id, -32001, 'blocked by local GitHub gateway policy: ' + violation.message));
+      return;
+    }
+
+    const secretIds = secretResultIdsFromRequest(parsed);
+    const headers = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      authorization: `Bearer ${getToken()}`,
+    };
+    if (protocolVersion) headers['mcp-protocol-version'] = protocolVersion;
+
+    let res;
+    try {
+      res = await fetchImpl(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(parsed),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      for (const id of requestIds) emit(rpcError(id, -32002, 'local GitHub MCP backend unavailable'));
+      return;
+    }
+
+    const type = String(res.headers.get('content-type') ?? '');
+    const text = await res.text();
+    let replies = [];
+    if (type.includes('text/event-stream')) {
+      replies = parseSseMessages(text);
+    } else if (text.trim()) {
+      try {
+        replies = [JSON.parse(text)].flat();
+      } catch {
+        replies = [];
+      }
+    }
+
+    if (!res.ok && replies.length === 0) {
+      for (const id of requestIds) emit(rpcError(id, -32003, `local GitHub MCP backend returned HTTP ${res.status}`));
+      return;
+    }
+
+    for (const reply of replies) {
+      if (reply?.result?.protocolVersion && typeof reply.result.protocolVersion === 'string') {
+        protocolVersion = reply.result.protocolVersion;
+      }
+      emit(rewriteLocalClientResponse(reply, secretIds));
+    }
+  };
+}
