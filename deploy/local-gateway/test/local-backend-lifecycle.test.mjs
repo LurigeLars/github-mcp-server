@@ -26,7 +26,7 @@ test('concurrent and successive client processes reuse the same container, inclu
     import { ensureLocalBackend } from ${JSON.stringify(bridgeUrl)};
     const configFile = ${JSON.stringify(configFile)};
     const docker = args => spawnSync('docker', args, { encoding: 'utf8', windowsHide: true, timeout: 30000 });
-    console.log(JSON.stringify(ensureLocalBackend({ image: ${JSON.stringify(image)}, configFile,
+    console.log(JSON.stringify(await ensureLocalBackend({ image: ${JSON.stringify(image)}, configFile,
       configText: readFileSync(configFile, 'utf8'), docker })));
   `;
   const connect = async () => JSON.parse((await exec(process.execPath, ['--input-type=module', '-e', client], { windowsHide: true, timeout: 40_000 })).stdout);

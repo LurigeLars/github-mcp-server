@@ -2,6 +2,7 @@
 // Docker access is injected; this module never launches processes or reads secrets.
 
 import { createHash } from 'node:crypto';
+import { setTimeout } from 'node:timers/promises';
 
 import {
   checkRequestPolicy,
@@ -48,16 +49,21 @@ export function buildDockerRunArgs({ image, configFile, name }) {
 
 // A backend belongs to its pinned image/config, not to a short-lived MCP client.
 // shortcut: old image/config backends need explicit retirement after their clients exit.
-export function ensureLocalBackend({ image, configFile, configText, docker }) {
+export async function ensureLocalBackend({ image, configFile, configText, docker }) {
   const key = createHash('sha256').update(image).update('\0').update(configText).digest('hex').slice(0, 16);
   const name = `github-mcp-local-stdio-${key}`;
   const inspect = () => docker(['inspect', '--format',
     `{"image":{{json .Config.Image}},"shared":{{json (index .Config.Labels "${SHARED_CONTAINER_LABEL}")}},"running":{{json .State.Running}}}`, name]);
   let state = inspect();
   if (state.status !== 0) {
-    docker(buildDockerRunArgs({ image, configFile, name }));
-    // A concurrent client may have won the name; inspect that same backend.
-    state = inspect();
+    const run = docker(buildDockerRunArgs({ image, configFile, name }));
+    // Docker reserves the name before a concurrent create is visible to inspect.
+    for (let attempt = 0; attempt < 40; attempt++) {
+      state = inspect();
+      if (state.status === 0) break;
+      if (run.status !== 0 && !/already in use/.test(run.stderr ?? '')) break;
+      await setTimeout(100);
+    }
   }
   if (state.status !== 0) throw new Error('failed to create the shared local GitHub MCP backend');
   const backend = JSON.parse(state.stdout);

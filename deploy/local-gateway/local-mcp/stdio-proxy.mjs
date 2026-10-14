@@ -90,7 +90,7 @@ process.on('uncaughtException', () => {
 
 removeOrphanedBackends();
 
-const { name, endpoint } = ensureLocalBackend({
+const { name, endpoint } = await ensureLocalBackend({
   image, configFile, configText: readFileSync(configFile, 'utf8'), docker,
 });
 
