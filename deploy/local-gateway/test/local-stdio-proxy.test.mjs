@@ -44,7 +44,7 @@ test('docker run arguments never carry credentials and bind only to loopback', (
   assert.deepEqual(args.slice(-3), ['http', '--port=8082', '--listen-host=0.0.0.0']);
 });
 
-test('successive clients reuse one backend and a stopped backend is started without recreation', () => {
+test('successive clients reuse one backend and a stopped backend is started without recreation', async () => {
   const image = parsePinnedImage(compose);
   const calls = [];
   let exists = false;
@@ -60,37 +60,38 @@ test('successive clients reuse one backend and a stopped backend is started with
     assert.fail('unexpected Docker operation: ' + args[0]);
   };
   const connect = () => ensureLocalBackend({ image, configFile: 'github.env', configText: 'GITHUB_TOOLSETS=repos', docker });
-  const first = connect();
-  assert.deepEqual(connect(), first);
+  const first = await connect();
+  assert.deepEqual(await connect(), first);
   running = false;
-  assert.deepEqual(connect(), first);
+  assert.deepEqual(await connect(), first);
   assert.equal(calls.filter(args => args[0] === 'run').length, 1);
   assert.equal(calls.filter(args => args[0] === 'start').length, 1);
   assert.equal(first.endpoint, 'http://127.0.0.1:49152/');
 });
 
-test('a concurrent creator winning the shared name is reused', () => {
+test('a concurrent name reservation is reused after inspect becomes available', async () => {
   const image = parsePinnedImage(compose);
   let inspections = 0;
   const docker = args => {
-    if (args[0] === 'inspect') return ++inspections === 1
+    if (args[0] === 'inspect') return ++inspections <= 3
       ? { status: 1 }
       : { status: 0, stdout: JSON.stringify({ image, shared: '1', running: true }) };
-    if (args[0] === 'run') return { status: 125 };
+    if (args[0] === 'run') return { status: 125, stderr: 'Conflict. The container name is already in use.' };
     if (args[0] === 'port') return { status: 0, stdout: '127.0.0.1:49152\n' };
     assert.fail('unexpected Docker operation: ' + args[0]);
   };
-  assert.equal(ensureLocalBackend({ image, configFile: 'github.env', configText: '', docker }).endpoint, 'http://127.0.0.1:49152/');
+  assert.equal((await ensureLocalBackend({ image, configFile: 'github.env', configText: '', docker })).endpoint, 'http://127.0.0.1:49152/');
+  assert.equal(inspections, 4);
 });
 
-test('wrong backend identity and Docker failure fail closed', () => {
+test('wrong backend identity and Docker failure fail closed', async () => {
   const image = parsePinnedImage(compose);
   for (const stdout of [JSON.stringify({ image: 'wrong-image', shared: '1', running: true }), JSON.stringify({ image, shared: '', running: true })]) {
-    assert.throws(() => ensureLocalBackend({ image, configFile: 'github.env', configText: '',
+    await assert.rejects(() => ensureLocalBackend({ image, configFile: 'github.env', configText: '',
       docker: args => { assert.equal(args[0], 'inspect'); return { status: 0, stdout }; },
     }), /identity mismatch/);
   }
-  assert.throws(() => ensureLocalBackend({ image, configFile: 'github.env', configText: '',
+  await assert.rejects(() => ensureLocalBackend({ image, configFile: 'github.env', configText: '',
     docker: () => ({ status: 1 }),
   }), /failed to create/);
 });
