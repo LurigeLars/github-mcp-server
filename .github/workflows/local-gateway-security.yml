@@ -44,6 +44,9 @@ jobs:
       - name: Check upstream tool inventory against gateway policy
         run: node --test deploy/local-gateway/test/upstream-tool-inventory.test.mjs
 
+      - name: Check shared backend lifecycle with concurrent clients
+        run: node --test deploy/local-gateway/test/local-backend-lifecycle.test.mjs
+
       - name: Exercise isolated stdin-to-tmpfs runtime injection
         shell: bash
         run: |
