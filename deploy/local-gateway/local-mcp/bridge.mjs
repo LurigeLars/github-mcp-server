@@ -1,5 +1,7 @@
-// Pure building blocks for the local stdio proxy (Claude Code, Claude Desktop, Codex).
-// No process, Docker or secret-store side effects live here so they can be tested in CI.
+// Building blocks for the local stdio proxy (Claude Code, Claude Desktop, Codex).
+// Docker access is injected; this module never launches processes or reads secrets.
+
+import { createHash } from 'node:crypto';
 
 import {
   checkRequestPolicy,
@@ -9,6 +11,7 @@ import {
 
 export const LOCAL_CONTAINER_LABEL = 'com.lurigelars.github-mcp-local.stdio';
 export const LOCAL_OWNER_PID_LABEL = 'com.lurigelars.github-mcp-local.stdio.owner-pid';
+export const SHARED_CONTAINER_LABEL = 'com.lurigelars.github-mcp-local.shared-stdio';
 export const BACKEND_PORT = 8082;
 
 // The pinned official image is read from compose.yaml so the local proxy can never
@@ -21,12 +24,11 @@ export function parsePinnedImage(composeText) {
 
 // The GitHub PAT is deliberately absent: the backend runs in HTTP mode and receives
 // the token only as a per-request Authorization header from this process.
-export function buildDockerRunArgs({ image, configFile, name, ownerPid }) {
+export function buildDockerRunArgs({ image, configFile, name }) {
   return [
-    'run', '-d', '--rm',
+    'run', '-d',
     '--name', name,
-    '--label', `${LOCAL_CONTAINER_LABEL}=1`,
-    '--label', `${LOCAL_OWNER_PID_LABEL}=${ownerPid}`,
+    '--label', `${SHARED_CONTAINER_LABEL}=1`,
     '--publish', `127.0.0.1::${BACKEND_PORT}`,
     '--user', '65532:65532',
     '--read-only',
@@ -44,11 +46,35 @@ export function buildDockerRunArgs({ image, configFile, name, ownerPid }) {
   ];
 }
 
-export function parseDockerPort(output) {
-  for (const line of String(output).split(/\r?\n/)) {
-    const m = /^127\.0\.0\.1:(\d+)\s*$/.exec(line.trim());
-    if (m) return Number(m[1]);
+// A backend belongs to its pinned image/config, not to a short-lived MCP client.
+// shortcut: old image/config backends need explicit retirement after their clients exit.
+export function ensureLocalBackend({ image, configFile, configText, docker }) {
+  const key = createHash('sha256').update(image).update('\0').update(configText).digest('hex').slice(0, 16);
+  const name = `github-mcp-local-stdio-${key}`;
+  const inspect = () => docker(['inspect', '--format',
+    `{"image":{{json .Config.Image}},"shared":{{json (index .Config.Labels "${SHARED_CONTAINER_LABEL}")}},"running":{{json .State.Running}}}`, name]);
+  let state = inspect();
+  if (state.status !== 0) {
+    docker(buildDockerRunArgs({ image, configFile, name }));
+    // A concurrent client may have won the name; inspect that same backend.
+    state = inspect();
   }
+  if (state.status !== 0) throw new Error('failed to create the shared local GitHub MCP backend');
+  const backend = JSON.parse(state.stdout);
+  if (backend.image !== image || backend.shared !== '1') throw new Error('shared local GitHub MCP backend identity mismatch');
+  if (backend.running === false) {
+    if (docker(['start', name]).status !== 0) throw new Error('failed to start the shared local GitHub MCP backend');
+  } else if (backend.running !== true) {
+    throw new Error('invalid shared local GitHub MCP backend state');
+  }
+  const port = docker(['port', name, `${BACKEND_PORT}/tcp`]);
+  if (port.status !== 0) throw new Error('failed to resolve the shared local GitHub MCP backend port');
+  return { name, endpoint: `http://127.0.0.1:${parseDockerPort(port.stdout)}/` };
+}
+
+export function parseDockerPort(output) {
+  const m = /^127\.0\.0\.1:(\d+)$/.exec(String(output).trim());
+  if (m && Number(m[1]) > 0 && Number(m[1]) <= 65535) return Number(m[1]);
   throw new Error('local GitHub MCP backend is not published on 127.0.0.1');
 }
 

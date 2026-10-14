@@ -2,7 +2,7 @@
 //
 // Secret path (unchanged storage, same pattern as github-mcp.ps1):
 //   DPAPI file -> Read-DpapiSecret in a child pwsh -> stdout pipe -> this process memory
-//   -> per-request Authorization header over 127.0.0.1 to an ephemeral official backend.
+//   -> per-request Authorization header over 127.0.0.1 to a shared official backend.
 // The PAT is never written to a file, command-line argument, Docker Config.Env, image
 // layer or log. The production gateway, its tmpfs import and its private backend network
 // are not touched. The backend image is the exact pin from compose.yaml.
@@ -13,15 +13,12 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import readline from 'node:readline';
-import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   LOCAL_CONTAINER_LABEL,
   LOCAL_OWNER_PID_LABEL,
-  BACKEND_PORT,
-  buildDockerRunArgs,
   createForwarder,
-  parseDockerPort,
+  ensureLocalBackend,
   parsePinnedImage,
   validateRuntimeToken,
 } from './bridge.mjs';
@@ -46,7 +43,7 @@ for (const path of [configFile, secretStore]) {
 }
 
 const image = parsePinnedImage(readFileSync(join(ROOT, 'compose.yaml'), 'utf8'));
-const docker = (args, options = {}) => spawnSync('docker', args, { encoding: 'utf8', windowsHide: true, ...options });
+const docker = args => spawnSync('docker', args, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
 
 function readPatFromDpapi() {
   const literal = secretStore.replaceAll("'", "''");
@@ -84,17 +81,7 @@ function removeOrphanedBackends() {
 }
 
 let token = readPatFromDpapi();
-const name = `github-mcp-stdio-${process.pid}-${randomBytes(3).toString('hex')}`;
-let started = false;
-
-function cleanup() {
-  token = null;
-  if (started) {
-    started = false;
-    docker(['rm', '-f', name]);
-  }
-}
-process.on('exit', cleanup);
+process.on('exit', () => { token = null; });
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => process.exit(0));
 process.on('uncaughtException', () => {
   log('unexpected proxy error; shutting down');
@@ -103,13 +90,9 @@ process.on('uncaughtException', () => {
 
 removeOrphanedBackends();
 
-const run = docker(buildDockerRunArgs({ image, configFile, name, ownerPid: process.pid }));
-if (run.status !== 0) fail('failed to start the local GitHub MCP backend container');
-started = true;
-
-const portOut = docker(['port', name, `${BACKEND_PORT}/tcp`]);
-if (portOut.status !== 0) fail('failed to resolve the local GitHub MCP backend port');
-const endpoint = `http://127.0.0.1:${parseDockerPort(portOut.stdout)}/`;
+const { name, endpoint } = ensureLocalBackend({
+  image, configFile, configText: readFileSync(configFile, 'utf8'), docker,
+});
 
 async function waitReady() {
   const deadline = Date.now() + 30_000;
@@ -124,7 +107,7 @@ async function waitReady() {
   fail('local GitHub MCP backend did not become reachable');
 }
 await waitReady();
-log(`ready (${image.split('@')[0]}, loopback backend)`);
+log(`ready (${image.split('@')[0]}, shared loopback backend ${name})`);
 
 const emit = obj => process.stdout.write(JSON.stringify(obj) + '\n');
 const handleLine = createForwarder({

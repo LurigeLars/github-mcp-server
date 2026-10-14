@@ -6,9 +6,11 @@ import test from 'node:test';
 import {
   buildDockerRunArgs,
   createForwarder,
+  ensureLocalBackend,
   parseDockerPort,
   parsePinnedImage,
   validateRuntimeToken,
+  SHARED_CONTAINER_LABEL,
 } from '../local-mcp/bridge.mjs';
 import { CHATGPT_HIDDEN_TOOLS, rewriteResponse } from '../public/policy.mjs';
 
@@ -26,7 +28,7 @@ test('local backend uses the exact compose image pin', () => {
 });
 
 test('docker run arguments never carry credentials and bind only to loopback', () => {
-  const args = buildDockerRunArgs({ image: parsePinnedImage(compose), configFile: 'C:\\x\\config\\github.env', name: 'n', ownerPid: 1 });
+  const args = buildDockerRunArgs({ image: parsePinnedImage(compose), configFile: 'C:\\x\\config\\github.env', name: 'n' });
   const joined = args.join(' ');
   assert.equal(args.includes('-e'), false);
   assert.equal(args.includes('--env'), false);
@@ -34,9 +36,63 @@ test('docker run arguments never carry credentials and bind only to loopback', (
   assert.equal(args.filter(a => a === '--env-file').length, 1);
   assert.ok(args[args.indexOf('--env-file') + 1].endsWith('github.env'));
   assert.ok(args.includes('127.0.0.1::8082'));
-  for (const flag of ['--read-only', '--rm']) assert.ok(args.includes(flag));
+  assert.ok(args.includes('--read-only'));
+  assert.equal(args.includes('--rm'), false, 'client exit must not remove the shared backend');
+  assert.ok(args.includes(`${SHARED_CONTAINER_LABEL}=1`));
+  assert.doesNotMatch(joined, /owner-pid/);
   assert.deepEqual(args.slice(args.indexOf('--cap-drop'), args.indexOf('--cap-drop') + 2), ['--cap-drop', 'ALL']);
   assert.deepEqual(args.slice(-3), ['http', '--port=8082', '--listen-host=0.0.0.0']);
+});
+
+test('successive clients reuse one backend and a stopped backend is started without recreation', () => {
+  const image = parsePinnedImage(compose);
+  const calls = [];
+  let exists = false;
+  let running = true;
+  const docker = args => {
+    calls.push(args);
+    if (args[0] === 'inspect') return exists
+      ? { status: 0, stdout: JSON.stringify({ image, shared: '1', running }) }
+      : { status: 1 };
+    if (args[0] === 'run') { exists = true; return { status: 0 }; }
+    if (args[0] === 'start') { running = true; return { status: 0 }; }
+    if (args[0] === 'port') return { status: 0, stdout: '127.0.0.1:49152\n' };
+    assert.fail('unexpected Docker operation: ' + args[0]);
+  };
+  const connect = () => ensureLocalBackend({ image, configFile: 'github.env', configText: 'GITHUB_TOOLSETS=repos', docker });
+  const first = connect();
+  assert.deepEqual(connect(), first);
+  running = false;
+  assert.deepEqual(connect(), first);
+  assert.equal(calls.filter(args => args[0] === 'run').length, 1);
+  assert.equal(calls.filter(args => args[0] === 'start').length, 1);
+  assert.equal(first.endpoint, 'http://127.0.0.1:49152/');
+});
+
+test('a concurrent creator winning the shared name is reused', () => {
+  const image = parsePinnedImage(compose);
+  let inspections = 0;
+  const docker = args => {
+    if (args[0] === 'inspect') return ++inspections === 1
+      ? { status: 1 }
+      : { status: 0, stdout: JSON.stringify({ image, shared: '1', running: true }) };
+    if (args[0] === 'run') return { status: 125 };
+    if (args[0] === 'port') return { status: 0, stdout: '127.0.0.1:49152\n' };
+    assert.fail('unexpected Docker operation: ' + args[0]);
+  };
+  assert.equal(ensureLocalBackend({ image, configFile: 'github.env', configText: '', docker }).endpoint, 'http://127.0.0.1:49152/');
+});
+
+test('wrong backend identity and Docker failure fail closed', () => {
+  const image = parsePinnedImage(compose);
+  for (const stdout of [JSON.stringify({ image: 'wrong-image', shared: '1', running: true }), JSON.stringify({ image, shared: '', running: true })]) {
+    assert.throws(() => ensureLocalBackend({ image, configFile: 'github.env', configText: '',
+      docker: args => { assert.equal(args[0], 'inspect'); return { status: 0, stdout }; },
+    }), /identity mismatch/);
+  }
+  assert.throws(() => ensureLocalBackend({ image, configFile: 'github.env', configText: '',
+    docker: () => ({ status: 1 }),
+  }), /failed to create/);
 });
 
 test('proxy source keeps the DPAPI path and never persists or logs the PAT', () => {
@@ -52,6 +108,8 @@ test('proxy source keeps the DPAPI path and never persists or logs the PAT', () 
 test('helpers validate port output and runtime token shape', () => {
   assert.equal(parseDockerPort('127.0.0.1:49152\n'), 49152);
   assert.throws(() => parseDockerPort('0.0.0.0:49152\n'));
+  assert.throws(() => parseDockerPort('127.0.0.1:49152\n0.0.0.0:49152\n'));
+  assert.throws(() => parseDockerPort('127.0.0.1:65536\n'));
   assert.equal(validateRuntimeToken(`  ${FAKE_TOKEN}\r\n`), FAKE_TOKEN);
   assert.throws(() => validateRuntimeToken(''));
   assert.throws(() => validateRuntimeToken('short'));
