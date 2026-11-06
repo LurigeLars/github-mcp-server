@@ -77,19 +77,6 @@ export const CHATGPT_WRITE_TOOLS = new Set([
 const SAFE_WRITE_OWNER = 'LurigeLars';
 const MAX_INLINE_TEXT_RESOURCE_CHARS = 128 * 1024;
 
-export function inlineTextResultIdsFromRequest(msg) {
-  const ids = new Set();
-  for (const m of [msg].flat()) {
-    if (m?.method === 'tools/call' &&
-        m?.params?.name === 'get_file_contents' &&
-        String(m?.params?.arguments?.owner ?? '') === SAFE_WRITE_OWNER &&
-        m.id !== undefined) {
-      ids.add(m.id);
-    }
-  }
-  return ids;
-}
-
 export function secretResultIdsFromRequest(msg) {
   const ids = new Set();
   for (const m of [msg].flat()) {
@@ -295,7 +282,7 @@ function normalizeSecurityAlertListResult(msg, alertListIds) {
   return out;
 }
 
-export function rewriteResponse(msg, secretIds, inlineTextIds, alertListIds) {
+export function rewriteResponse(msg, secretIds, alertListIds) {
   if (!msg || typeof msg !== 'object') return msg;
 
   let out = rewriteToolList(msg);
@@ -307,8 +294,34 @@ export function rewriteResponse(msg, secretIds, inlineTextIds, alertListIds) {
   return redactSecretScanningResult(out, msg, secretIds);
 }
 
+function containsKey(value, key) {
+  if (Array.isArray(value)) return value.some(item => containsKey(item, key));
+  if (!value || typeof value !== 'object') return false;
+  return Object.keys(value).some(k => k.toLowerCase() === key) ||
+    Object.values(value).some(item => containsKey(item, key));
+}
+
+// Secret Scanning alerts always carry secret_type. Matching on content as well as on the
+// request id also covers results delivered on another stream (e.g. the GET SSE stream),
+// where the id of the originating request is unknown. A JSON file that happens to contain
+// secret_type is redacted too, which errs on the safe side.
+function looksLikeSecretScanningResult(msg) {
+  const result = msg?.result;
+  if (containsKey(result?.structuredContent, 'secret_type')) return true;
+  return (Array.isArray(result?.content) ? result.content : []).some(item => {
+    if (item?.type !== 'text' || typeof item.text !== 'string' || !item.text.includes('secret_type')) {
+      return false;
+    }
+    try {
+      return containsKey(JSON.parse(item.text), 'secret_type');
+    } catch {
+      return false;
+    }
+  });
+}
+
 function redactSecretScanningResult(out, original, secretIds) {
-  if (!secretIds?.has(out?.id)) return out;
+  if (!secretIds?.has(out?.id) && !looksLikeSecretScanningResult(out)) return out;
 
   if (out === original) out = structuredClone(original);
 
@@ -342,21 +355,21 @@ export function rewriteLocalClientResponse(msg, secretIds) {
   return redactSecretScanningResult(out, msg, secretIds);
 }
 
-export function rewriteJsonText(text, secretIds, inlineTextIds, alertListIds) {
+export function rewriteJsonText(text, secretIds, alertListIds) {
   try {
     const parsed = JSON.parse(text);
     const rewritten = Array.isArray(parsed)
-      ? parsed.map(m => rewriteResponse(m, secretIds, inlineTextIds, alertListIds))
-      : rewriteResponse(parsed, secretIds, inlineTextIds, alertListIds);
+      ? parsed.map(m => rewriteResponse(m, secretIds, alertListIds))
+      : rewriteResponse(parsed, secretIds, alertListIds);
     return JSON.stringify(rewritten);
   } catch {
     return text;
   }
 }
 
-export function rewriteSseLine(line, secretIds, inlineTextIds, alertListIds) {
+export function rewriteSseLine(line, secretIds, alertListIds) {
   if (!line.startsWith('data:')) return line;
   const raw = line.slice(5).trimStart();
-  const rewritten = rewriteJsonText(raw, secretIds, inlineTextIds, alertListIds);
+  const rewritten = rewriteJsonText(raw, secretIds, alertListIds);
   return 'data: ' + rewritten;
 }

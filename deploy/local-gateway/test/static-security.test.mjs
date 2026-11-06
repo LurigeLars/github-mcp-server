@@ -253,7 +253,7 @@ test('code scanning list results are normalized to a stable alerts object', () =
 
   const alertListIds = securityAlertListResultIdsFromRequest(request);
   const rewritten = JSON.parse(
-    rewriteJsonText(response, new Set(), new Set(), alertListIds),
+    rewriteJsonText(response, new Set(), alertListIds),
   );
   assert.deepEqual(JSON.parse(rewritten.result.content[0].text), {
     alerts: [{ number: 274, rule: { id: 'py/unused-import' } }],
@@ -285,7 +285,7 @@ test('secret scanning list normalization preserves local secret redaction', () =
   const secretIds = secretResultIdsFromRequest(request);
   const alertListIds = securityAlertListResultIdsFromRequest(request);
   const rewritten = JSON.parse(
-    rewriteJsonText(response, secretIds, new Set(), alertListIds),
+    rewriteJsonText(response, secretIds,alertListIds),
   );
   assert.deepEqual(JSON.parse(rewritten.result.content[0].text), {
     alerts: [{ number: 1, secret: '[REDACTED_BY_LOCAL_GATEWAY]' }],
@@ -317,7 +317,7 @@ test('dependabot alert list objects are not rewritten', () => {
   const alertListIds = securityAlertListResultIdsFromRequest(request);
   assert.equal(alertListIds.size, 0);
   const rewritten = JSON.parse(
-    rewriteJsonText(response, new Set(), new Set(), alertListIds),
+    rewriteJsonText(response, new Set(), alertListIds),
   );
   assert.deepEqual(JSON.parse(rewritten.result.content[0].text), {
     alerts: [{ number: 16 }],
@@ -365,13 +365,13 @@ function assertStructuredSecretRedacted(rewritten) {
 test('secret scanning structuredContent is redacted on the public JSON path', () => {
   const secretIds = secretResultIdsFromRequest(structuredSecretRequest);
   assertStructuredSecretRedacted(JSON.parse(
-    rewriteJsonText(JSON.stringify(structuredSecretResponse()), secretIds, new Set(), new Set()),
+    rewriteJsonText(JSON.stringify(structuredSecretResponse()), secretIds,new Set()),
   ));
 });
 
 test('secret scanning structuredContent is redacted on the public SSE path', () => {
   const secretIds = secretResultIdsFromRequest(structuredSecretRequest);
-  const line = rewriteSseLine('data: ' + JSON.stringify(structuredSecretResponse()), secretIds, new Set(), new Set());
+  const line = rewriteSseLine('data: ' + JSON.stringify(structuredSecretResponse()), secretIds,new Set());
   assert.equal(line.startsWith('data: '), true);
   assertStructuredSecretRedacted(JSON.parse(line.slice(6)));
 });
@@ -381,8 +381,27 @@ test('secret scanning structuredContent is redacted for local stdio clients', ()
   assertStructuredSecretRedacted(rewriteLocalClientResponse(structuredSecretResponse(), secretIds));
 });
 
+test('a secret scanning result is redacted even without its request id (other stream)', () => {
+  // Results may arrive on a different Streamable HTTP/SSE response (e.g. the GET stream,
+  // forwarded with empty id sets); the secret_type field identifies them by content.
+  const payload = { number: 2, secret_type: 'github_personal_access_token', secret: 'do-not-leak' };
+  const response = {
+    jsonrpc: '2.0',
+    id: 99,
+    result: { content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload },
+  };
+  for (const out of [
+    JSON.parse(rewriteJsonText(JSON.stringify(response), new Set(), new Set())),
+    JSON.parse(rewriteSseLine('data: ' + JSON.stringify(response), new Set(), new Set()).slice(6)),
+    rewriteLocalClientResponse(structuredClone(response), new Set()),
+  ]) {
+    assert.equal(JSON.stringify(out).includes('do-not-leak'), false);
+    assert.equal(out.result.structuredContent.secret, '[REDACTED_BY_LOCAL_GATEWAY]');
+  }
+});
+
 test('structuredContent of other tools is passed through unchanged', () => {
   const response = structuredSecretResponse();
-  const rewritten = JSON.parse(rewriteJsonText(JSON.stringify(response), new Set(), new Set(), new Set()));
+  const rewritten = JSON.parse(rewriteJsonText(JSON.stringify(response), new Set(), new Set()));
   assert.deepEqual(rewritten.result.structuredContent, structuredSecretPayload);
 });
