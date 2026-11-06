@@ -188,7 +188,7 @@ for (const sse of [false, true]) {
 
 test('gateway (ChatGPT) surface is unchanged and still hides duplicates', () => {
   const msg = { jsonrpc: '2.0', id: 1, result: { tools: upstreamTools } };
-  const names = rewriteResponse(msg, new Set(), new Set(), new Set()).result.tools.map(t => t.name);
+  const names = rewriteResponse(msg, new Set(), new Set()).result.tools.map(t => t.name);
   assert.deepEqual(names, ['list_secret_scanning_alerts']);
 });
 
@@ -227,4 +227,15 @@ test('negative: unreachable backend yields a JSON-RPC error', async () => {
   const handle = createForwarder({ endpoint: 'http://127.0.0.1:9/', getToken: () => FAKE_TOKEN, emit: m => out.push(m), timeoutMs: 2000 });
   await handle(JSON.stringify({ jsonrpc: '2.0', id: 8, method: 'tools/list' }));
   assert.match(out[0].error.message, /unavailable/);
+});
+
+test('negative: a 2xx with an empty body still answers every request id', async () => {
+  const out = [];
+  const fetchImpl = async () => new Response('', { status: 200, headers: { 'content-type': 'application/json' } });
+  const handle = createForwarder({ endpoint: 'http://127.0.0.1:9/', getToken: () => FAKE_TOKEN, emit: m => out.push(m), fetchImpl });
+  await handle(JSON.stringify([
+    { jsonrpc: '2.0', id: 11, method: 'tools/list' },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+  ]));
+  assert.deepEqual(out.map(m => [m.id, m.error?.code]), [[11, -32003]]);
 });

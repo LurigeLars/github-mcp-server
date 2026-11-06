@@ -182,5 +182,10 @@ export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, t
       }
       emit(rewriteLocalClientResponse(reply, secretIds));
     }
+    // A 2xx with an empty or unreadable body would otherwise leave the client waiting forever.
+    const answered = new Set(replies.map(reply => reply?.id));
+    for (const id of requestIds) {
+      if (!answered.has(id)) emit(rpcError(id, -32003, 'local GitHub MCP backend returned no response'));
+    }
   };
 }
