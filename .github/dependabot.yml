@@ -1,29 +1,34 @@
 version: 2
+# One weekly pull request for all version updates (every ecosystem), so the
+# strict up-to-date branch rule needs a single CI run. Security updates are
+# not part of this group and still open immediately.
+multi-ecosystem-groups:
+  weekly-dependencies:
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "07:00"
+      timezone: Europe/Stockholm
+    open-pull-requests-limit: 5
+
 updates:
   - package-ecosystem: "docker-compose"
     directories:
       - "/deploy/local-gateway"
       - "/deploy/local-gateway/test"
-    schedule:
-      interval: "weekly"
-      day: "saturday"
-      time: "07:00"
-      timezone: "Europe/Stockholm"
-    open-pull-requests-limit: 5
-
+    multi-ecosystem-group: weekly-dependencies
+    patterns: ["*"]
 
     groups:
       security-minor-patch:
         applies-to: "security-updates"
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-      compatible-minor-patch:
-        applies-to: "version-updates"
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    multi-ecosystem-group: weekly-dependencies
+    patterns: ["*"]
     groups:
       security-minor-patch:
         applies-to: "security-updates"
@@ -31,18 +36,3 @@ updates:
         exclude-patterns:
           - "github/codeql-action/*"
         update-types: ["minor", "patch"]
-      compatible-minor-patch:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        exclude-patterns:
-          - "github/codeql-action/*"
-        update-types: ["minor", "patch"]
-      codeql-actions:
-        patterns:
-          - "github/codeql-action/*"
-    schedule:
-      interval: "weekly"
-      day: "saturday"
-      time: "07:00"
-      timezone: "Europe/Stockholm"
-    open-pull-requests-limit: 5
