@@ -6,6 +6,9 @@ updates:
       - "/deploy/local-gateway/test"
     schedule:
       interval: "weekly"
+      day: "saturday"
+      time: "07:00"
+      timezone: "Europe/Stockholm"
     open-pull-requests-limit: 5
 
 
@@ -39,4 +42,7 @@ updates:
           - "github/codeql-action/*"
     schedule:
       interval: "weekly"
+      day: "saturday"
+      time: "07:00"
+      timezone: "Europe/Stockholm"
     open-pull-requests-limit: 5
