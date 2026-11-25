@@ -49,6 +49,8 @@ services:
       GATEWAY_SECRET_FILE: /run/github-mcp-secrets/gateway_secret
     volumes:
       - ./public:/app:ro
+      # Dedicated non-secret metrics state, initialized from the node-owned home directory.
+      - github-tool-usage:/home/node
     networks:
       github_backend:
       edge:
@@ -83,3 +85,6 @@ networks:
   edge:
     external: true
     name: github-public_edge
+
+volumes:
+  github-tool-usage:

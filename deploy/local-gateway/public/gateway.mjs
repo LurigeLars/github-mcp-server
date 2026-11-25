@@ -10,6 +10,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { readFileSync, unlinkSync } from 'node:fs';
+import {createToolUsageStore,createUsageTracker,createCatalogObserver,listRequestIds,appendUsageTool,isUsageCall,reportWithCatalog} from './tool-usage.mjs';
 import {
   checkRequestPolicy,
   secretResultIdsFromRequest,
@@ -36,6 +37,11 @@ function consumeRuntimeSecret(path, label, minLength) {
   return value;
 }
 
+const usageStore=createToolUsageStore({root:process.env.GITHUB_TOOL_USAGE_DIR||'/home/node/tool-usage',
+  enabled:process.env.GITHUB_MCP_TOOL_USAGE!=='off'&&!process.env.NODE_TEST_CONTEXT});
+const metricTools=new Set(['tool_usage']);
+const catalog=createCatalogObserver(usageStore,metricTools);
+process.once('exit',()=>usageStore.flush());
 const TOKEN = consumeRuntimeSecret(GITHUB_PAT_FILE, 'GitHub PAT', 20);
 if (!TOKEN) process.exit(1);
 
@@ -208,7 +214,22 @@ function rewriteUpstreamRequest(parsed, originalBody) {
   return Buffer.from(JSON.stringify(payload));
 }
 
-function forward(req, res, body, secretIds, alertListIds) {
+function forward(req, res, body, secretIds, alertListIds, metrics) {
+  // Keep all existing response redaction/normalization before catalog observation.
+  const rewrite=(raw)=>{
+    const rewritten=rewriteJsonText(raw,secretIds,alertListIds);
+    if(!metrics)return rewritten;
+    try{
+      const parsed=JSON.parse(rewritten);
+      for(const m of [parsed].flat()){
+        metrics.usage.observe(m);
+        catalog.observe(m,metrics.listIds);
+        if(metrics.listIds.has(m?.id))appendUsageTool(m,metricTools);
+      }
+      return JSON.stringify(parsed);
+    }catch{return rewritten;}
+  };
+  const rewriteLine=line=>line.startsWith('data:')?'data: '+rewrite(line.slice(5).trimStart()):line;
   const headers = upstreamHeaders(req, body ? body.length : null);
 
   // The PAT is deliberately read from runtime tmpfs and forwarded only to the fixed internal MCP backend.
@@ -217,6 +238,7 @@ function forward(req, res, body, secretIds, alertListIds) {
     upRes => {
       const responseHeaders = { ...upRes.headers };
       delete responseHeaders['content-length'];
+      if((upRes.statusCode??502)>=400)metrics?.usage.finish(upRes.statusCode===429?'RATE_LIMIT':'HTTP_ERROR');
 
       const type = String(upRes.headers['content-type'] ?? '');
       if (type.includes('text/event-stream')) {
@@ -227,9 +249,12 @@ function forward(req, res, body, secretIds, alertListIds) {
           pending += chunk;
           const lines = pending.split('\n');
           pending = lines.pop();
-          if (lines.length) res.write(lines.map(line => rewriteSseLine(line, secretIds, alertListIds)).join('\n') + '\n');
+          if (lines.length) res.write(lines.map(line => metrics?rewriteLine(line):rewriteSseLine(line, secretIds, alertListIds)).join('\n') + '\n');
         });
-        upRes.on('end', () => res.end(pending ? rewriteSseLine(pending, secretIds, alertListIds) : undefined));
+        upRes.on('end', () => {
+          const tail=pending?(metrics?rewriteLine(pending):rewriteSseLine(pending,secretIds,alertListIds)):undefined;
+          metrics?.usage.finish();res.end(tail);
+        });
         return;
       }
 
@@ -237,7 +262,8 @@ function forward(req, res, body, secretIds, alertListIds) {
       upRes.on('data', c => chunks.push(c));
       upRes.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
-        const out = Buffer.from(rewriteJsonText(raw, secretIds, alertListIds));
+        const out = Buffer.from(rewrite(raw));
+        metrics?.usage.finish();
         delete responseHeaders['transfer-encoding'];
         responseHeaders['content-length'] = String(out.length);
         res.writeHead(upRes.statusCode ?? 502, responseHeaders);
@@ -247,13 +273,14 @@ function forward(req, res, body, secretIds, alertListIds) {
   );
 
   up.on('error', err => {
+    metrics?.usage.finish('UPSTREAM_ERROR');
     console.warn('upstream unavailable');
     if (!res.headersSent) send(res, 502, 'upstream unavailable');
     else res.destroy();
   });
 
   res.on('close', () => {
-    if (!res.writableFinished) up.destroy();
+    if (!res.writableFinished){metrics?.usage.finish('ABORTED');up.destroy();}
   });
 
   up.end(body);
@@ -310,12 +337,22 @@ http.createServer(async (req, res) => {
       return send(res, 403, 'blocked by local GitHub gateway policy: ' + violation.message);
     }
 
+    const messages=[parsed].flat();
+    const reports=messages.filter(isUsageCall);
+    if(reports.length){
+      if(messages.length!==1)return send(res,400,'tool_usage requires a single call');
+      const reply=reportWithCatalog(reports[0],usageStore,'public_gateway',catalog);
+      res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});
+      return res.end(JSON.stringify(reply));
+    }
+    const usage=createUsageTracker(usageStore,metricTools);
+    for(const m of messages)usage.start(m);
     const secretIds = secretResultIdsFromRequest(parsed);
     const alertListIds = securityAlertListResultIdsFromRequest(parsed);
     console.log(`${new Date().toISOString()} authenticated MCP request`);
 
     const upstreamBody = rewriteUpstreamRequest(parsed, body);
-    forward(req, res, upstreamBody, secretIds, alertListIds);
+    forward(req, res, upstreamBody, secretIds, alertListIds, {usage,listIds:listRequestIds(messages)});
   });
 }).listen(PORT, '0.0.0.0', () => {
   console.log(
