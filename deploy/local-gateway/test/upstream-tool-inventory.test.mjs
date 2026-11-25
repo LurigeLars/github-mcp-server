@@ -47,36 +47,64 @@ async function listUpstreamTools() {
   assert.equal(run.status, 0, `docker run failed: ${run.stderr}`);
   try {
     const port = docker(['port', container, '8082/tcp']).stdout.trim().split(':').pop();
+    const endpoint = `http://127.0.0.1:${port}/`;
+    const version = '2026-07-28';
+    const meta = {
+      'io.modelcontextprotocol/protocolVersion': version,
+      'io.modelcontextprotocol/clientCapabilities': {},
+    };
+    async function request(method, id, modern = false) {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          // Synthetic placeholder; discovery/list do not need GitHub API calls.
+          authorization: 'Bearer ghp_' + '0'.repeat(36),
+          ...(modern ? { 'mcp-protocol-version': version, 'mcp-method': method } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id, method, params: modern ? { _meta: meta } : {},
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const body = await res.text();
+      const data = body.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('') || body;
+      const reply = JSON.parse(data);
+      assert.ok(res.ok, `HTTP ${res.status} for ${method}`);
+      assert.equal(reply.id, id);
+      assert.ok(reply.result, `Missing result for ${method}: ${JSON.stringify(reply.error ?? {})}`);
+      if (modern) {
+        assert.equal(res.headers.get('mcp-session-id'), null, 'modern response must not establish an MCP session');
+      }
+      return reply.result;
+    }
+
+    let legacy;
     let lastError;
     for (let attempt = 0; attempt < 60; attempt++) {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            accept: 'application/json, text/event-stream',
-            // Placeholder with a valid shape; never sent to GitHub by tools/list.
-            authorization: 'Bearer ghp_' + '0'.repeat(36),
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
-          signal: AbortSignal.timeout(20_000),
-        });
-        const text = await res.text();
-        const data = text.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('') || text;
-        return JSON.parse(data).result.tools;
+        legacy = (await request('tools/list', 1)).tools;
+        break;
       } catch (err) {
         lastError = err;
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
-    throw lastError;
+    if (!legacy) throw lastError;
+
+    // Do not fall back silently: success here proves that the pinned image
+    // answers the modern wire protocol without an initialize handshake.
+    const discovered = await request('server/discover', 2, true);
+    assert.ok(discovered.supportedVersions.includes(version));
+    const modern = (await request('tools/list', 3, true)).tools;
+    return { legacy, modern };
   } finally {
     docker(['stop', container]);
   }
 }
 
-test('every upstream write tool is covered by the gateway policy', async () => {
-  const tools = await listUpstreamTools();
+function assertPolicyCoverage(tools) {
   const names = new Set(tools.map(tool => tool.name));
   assert.ok(names.size > 50, `unexpectedly small upstream tool list: ${names.size}`);
 
@@ -101,4 +129,14 @@ test('every upstream write tool is covered by the gateway policy', async () => {
     .filter(tool => tool.annotations.readOnlyHint === true && CHATGPT_WRITE_TOOLS.has(tool.name))
     .map(tool => tool.name);
   assert.deepEqual(mislabeled, [], 'policy write tools that upstream now marks read-only');
+}
+
+test('every upstream write tool is covered by policy in both protocol eras', async () => {
+  const { legacy, modern } = await listUpstreamTools();
+  assertPolicyCoverage(legacy);
+  assertPolicyCoverage(modern);
+  const inventory = tools => tools.map(tool => [tool.name, tool.annotations?.readOnlyHint])
+    .sort(([a], [b]) => a.localeCompare(b));
+  assert.deepEqual(inventory(modern), inventory(legacy),
+    'protocol selection must not change tool names or write classification');
 });
