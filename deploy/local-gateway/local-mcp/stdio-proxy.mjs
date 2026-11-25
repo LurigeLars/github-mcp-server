@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import readline from 'node:readline';
+import {createToolUsageStore} from '../public/tool-usage.mjs';
 import { fileURLToPath } from 'node:url';
 import {
   LOCAL_CONTAINER_LABEL,
@@ -110,7 +111,11 @@ await waitReady();
 log(`ready (${image.split('@')[0]}, shared loopback backend ${name})`);
 
 const emit = obj => process.stdout.write(JSON.stringify(obj) + '\n');
+const usageStore=createToolUsageStore({root:process.env.GITHUB_TOOL_USAGE_DIR,
+  enabled:process.env.GITHUB_MCP_TOOL_USAGE!=='off'});
+process.once('exit',()=>usageStore.flush());
 const handleLine = createForwarder({
+  usageStore,
   endpoint,
   getToken: () => {
     if (!token) throw new Error('token unavailable');

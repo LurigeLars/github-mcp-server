@@ -209,3 +209,7 @@ See [`deploy/local-gateway/README.md`](deploy/local-gateway/README.md) for opera
 secret handling and
 [`docs/local-and-cloud-deployment.md`](docs/local-and-cloud-deployment.md) for the full
 architecture.
+
+### Local MCP tool usage
+
+The protected gateway and local stdio proxy expose `tool_usage(days=7, limit=50, tool=...)`, with per-tool counts, fixed failure categories and histogram median/p95 upper bounds, 30 UTC days of bounded local metadata files and a catalog of unobserved tools. Scope is separate for each proxy. Only names observed in policy-filtered upstream tools/list replies are recorded; discovery is per process and can be incomplete. Calls before discovery, direct upstream and official ChatGPT GitHub connector calls are not measured. Responses on another HTTP/SSE stream cannot be reliably correlated; unmatched calls are flagged, not assumed successful. No repo names, content, input/output, credentials, request IDs or error prose persisted. Gateway uses a dedicated volume at the node-owned home; stdio uses local user storage. Disable with `GITHUB_MCP_TOOL_USAGE=off`. No changes to upstream image pin, secret import, owner enforcement, tool hiding or secret redaction. Do not restart the gateway without the approved runtime secret injection wrapper.

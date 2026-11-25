@@ -1,3 +1,4 @@
+import {createUsageTracker,createCatalogObserver,listRequestIds,appendUsageTool,isUsageCall,reportWithCatalog} from '../public/tool-usage.mjs';
 // Building blocks for the local stdio proxy (Claude Code, Claude Desktop, Codex).
 // Docker access is injected; this module never launches processes or reads secrets.
 
@@ -114,7 +115,9 @@ function parseSseMessages(text) {
 
 // Creates a line handler that forwards one JSON-RPC message (or batch) per line to the
 // stateless upstream Streamable HTTP endpoint and writes rewritten responses to `emit`.
-export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, timeoutMs = 330_000 }) {
+export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, timeoutMs = 330_000, usageStore }) {
+  const metricTools=new Set(['tool_usage']);
+  const catalog=usageStore?createCatalogObserver(usageStore,metricTools):null;
   let protocolVersion = null;
 
   return async function handleLine(line) {
@@ -137,6 +140,15 @@ export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, t
       return;
     }
 
+    const reports=usageStore?messages.filter(isUsageCall):[];
+    if(reports.length){
+      if(messages.length!==1){for(const id of requestIds)emit(rpcError(id,-32600,'tool_usage requires a single call'));return;}
+      emit(reportWithCatalog(reports[0],usageStore,'local_stdio_proxy',catalog));return;
+    }
+    const usage=usageStore?createUsageTracker(usageStore,metricTools):null;
+    const listIds=listRequestIds(messages);
+    for(const m of messages)usage?.start(m);
+    try{
     const secretIds = secretResultIdsFromRequest(parsed);
     const headers = {
       'content-type': 'application/json',
@@ -154,6 +166,7 @@ export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, t
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
+      usage?.finish('UPSTREAM_ERROR');
       for (const id of requestIds) emit(rpcError(id, -32002, 'local GitHub MCP backend unavailable'));
       return;
     }
@@ -171,6 +184,7 @@ export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, t
       }
     }
 
+    if(!res.ok)usage?.finish(res.status===429?'RATE_LIMIT':'HTTP_ERROR');
     if (!res.ok && replies.length === 0) {
       for (const id of requestIds) emit(rpcError(id, -32003, `local GitHub MCP backend returned HTTP ${res.status}`));
       return;
@@ -180,12 +194,18 @@ export function createForwarder({ endpoint, getToken, emit, fetchImpl = fetch, t
       if (reply?.result?.protocolVersion && typeof reply.result.protocolVersion === 'string') {
         protocolVersion = reply.result.protocolVersion;
       }
-      emit(rewriteLocalClientResponse(reply, secretIds));
+      const rewritten=rewriteLocalClientResponse(reply,secretIds);
+      if(usage){
+        usage.observe(rewritten);catalog.observe(rewritten,listIds);
+        if(listIds.has(rewritten?.id))appendUsageTool(rewritten,metricTools);
+      }
+      emit(rewritten);
     }
     // A 2xx with an empty or unreadable body would otherwise leave the client waiting forever.
     const answered = new Set(replies.map(reply => reply?.id));
     for (const id of requestIds) {
       if (!answered.has(id)) emit(rpcError(id, -32003, 'local GitHub MCP backend returned no response'));
     }
+    }finally{usage?.finish();}
   };
 }
