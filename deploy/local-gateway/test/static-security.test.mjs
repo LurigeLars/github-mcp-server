@@ -75,7 +75,7 @@ test('normal up is idempotent while explicit secret import forces gateway recrea
   assert.match(runner, /function Start-GatewayForSecretImport\(\[switch\]\$ForceRecreate\)/);
   assert.match(runner, /if \(-not \$ForceRecreate\)/);
   assert.match(runner, /Where-Object \{ \$_ \}/);
-  assert.match(runner, /up -d --force-recreate github-gateway/);
+  assert.match(runner, /up -d --no-deps --force-recreate github-gateway/);
   assert.match(runner, /'up'[\s\S]*Start-GatewayForSecretImport\s*\n/);
   assert.match(runner, /'import-secrets'[\s\S]*Start-GatewayForSecretImport -ForceRecreate/);
 });
@@ -447,4 +447,11 @@ test('secret scanning update results use the same redaction as alert reads', () 
     rewriteJsonText(JSON.stringify(structuredSecretResponse()), ids, new Set()),
   ));
   assertStructuredSecretRedacted(rewriteLocalClientResponse(structuredSecretResponse(), ids));
+});
+
+
+test('shared gateway image remains local-only and secret import preserves the upstream', () => {
+  assert.match(compose, /image: dockerlocal-gateway:node-26\.13\.1-r1\s+pull_policy: never/);
+  assert.match(runner, /up -d github-mcp/);
+  assert.match(runner, /up -d --no-deps --force-recreate github-gateway/);
 });
