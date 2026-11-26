@@ -182,7 +182,7 @@ function Start-GatewayForSecretImport([switch]$ForceRecreate) {
 
   # Explicit secret re-import, or recovery from a missing/unhealthy gateway,
   # must recreate the process because credentials are consumed only at startup.
-  & docker @Compose up -d --force-recreate github-gateway
+  & docker @Compose up -d --no-deps --force-recreate github-gateway
   if ($LASTEXITCODE -ne 0) { throw 'GitHub gateway recreate failed.' }
 
   Import-RuntimeSecrets
