@@ -123,3 +123,7 @@ separate policy for capabilities that must actually be blocked.
 For `get_file_contents` calls targeting repositories owned by `LurigeLars`, the gateway converts upstream MCP embedded **text** resources into ordinary MCP text content before returning the response to ChatGPT. This avoids the per-conversation attachment-materialization prompt for small text files while keeping the official GitHub MCP server unchanged.
 
 The rewrite is intentionally narrow: binary resources, large-file resource links, directory listings and repositories owned by anyone else are left unchanged.
+
+### Security alert updates
+
+The three upstream alert update tools are classified as writes and retain the existing repository-owner boundary for both public HTTP and local stdio clients. A dismissal or resolution requires a non-empty audit comment. Fix the root cause first; dismiss a verified false positive only with evidence in the comment. Obtain explicit operator approval before suppressing an actual vulnerability or exposure. Do not assign an alert to an agent, request delegated dismissal, or override secret validity without explicit operator approval. Marking a secret as revoked does not revoke the credential: verify rotation or revocation separately. Secret scanning update responses retain the same redaction policy as reads. The gateway enforces owner and comment checks; factual verification and approval are operator/agent responsibilities, not inferred from a comment. Existing GitHub token permissions and delegated dismissal policies remain unchanged.
