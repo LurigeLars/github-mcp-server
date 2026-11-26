@@ -7,6 +7,7 @@
 export const SECRET_SCANNING_TOOLS = new Set([
   'get_secret_scanning_alert',
   'list_secret_scanning_alerts',
+  'update_secret_scanning_alert',
 ]);
 
 export const SECURITY_ALERT_LIST_TOOLS = new Set([
@@ -69,9 +70,12 @@ export const CHATGPT_WRITE_TOOLS = new Set([
   'push_files',
   'request_copilot_review',
   'sub_issue_write',
+  'update_code_scanning_alert',
+  'update_dependabot_alert',
   'update_issue_comment',
   'update_pull_request',
   'update_pull_request_branch',
+  'update_secret_scanning_alert',
 ]);
 
 const SAFE_WRITE_OWNER = 'LurigeLars';
@@ -115,6 +119,18 @@ function toolCallPolicyViolation(m) {
 
   if (String(args?.owner ?? '') !== SAFE_WRITE_OWNER) {
     return 'write tool ' + name + ' is restricted to owner ' + SAFE_WRITE_OWNER;
+  }
+
+  // Alert state changes need an audit explanation, not merely a dismissal reason.
+  const alertComment = {
+    update_code_scanning_alert: 'dismissed_comment',
+    update_dependabot_alert: 'dismissed_comment',
+    update_secret_scanning_alert: 'resolution_comment',
+  };
+  if (Object.hasOwn(alertComment, name) &&
+      ['dismissed', 'resolved'].includes(args?.state) &&
+      (typeof args[alertComment[name]] !== 'string' || !args[alertComment[name]].trim())) {
+    return 'security alert dismissal or resolution requires a documented comment';
   }
 
   if (name === 'issue_write' &&
