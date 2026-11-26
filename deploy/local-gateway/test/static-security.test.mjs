@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  CHATGPT_WRITE_TOOLS,
+  checkRequestPolicy,
   rewriteJsonText,
   rewriteLocalClientResponse,
   rewriteSseLine,
@@ -404,4 +406,45 @@ test('structuredContent of other tools is passed through unchanged', () => {
   const response = structuredSecretResponse();
   const rewritten = JSON.parse(rewriteJsonText(JSON.stringify(response), new Set(), new Set()));
   assert.deepEqual(rewritten.result.structuredContent, structuredSecretPayload);
+});
+
+test('security alert writes are exposed, owner scoped and require a resolution comment', () => {
+  // Obtain the existing configured owner from a synthetic request already used in
+  // this suite, rather than introducing another account identifier.
+  const owner = structuredSecretRequest.params.arguments.owner;
+  const cases = [
+    ['update_dependabot_alert', 'dismissed', 'dismissed_reason', 'inaccurate', 'dismissed_comment'],
+    ['update_code_scanning_alert', 'dismissed', 'dismissed_reason', 'false positive', 'dismissed_comment'],
+    ['update_secret_scanning_alert', 'resolved', 'resolution', 'false_positive', 'resolution_comment'],
+  ];
+  for (const [name, state, reasonKey, reason, commentKey] of cases) {
+    assert.ok(CHATGPT_WRITE_TOOLS.has(name));
+    const args = { owner, repo: 'example', alertNumber: 1, state,
+      [reasonKey]: reason, [commentKey]: 'Synthetic regression: verified false positive.' };
+    const call = (arguments_) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name, arguments: arguments_ } });
+    assert.equal(checkRequestPolicy(call(args)), null);
+    assert.ok(checkRequestPolicy(call({ ...args, owner: 'other-owner' })));
+    assert.ok(checkRequestPolicy(call({ ...args, owner: undefined })));
+    assert.ok(checkRequestPolicy(call({ ...args, [commentKey]: ' ' })));
+    assert.ok(checkRequestPolicy(call({ ...args, [commentKey]: null })));
+    assert.equal(checkRequestPolicy(call({ owner, repo: 'example', alertNumber: 1, state: 'open' })), null);
+    const discovery = { jsonrpc: '2.0', id: 2, result: { tools: [{ name, annotations: { readOnlyHint: false, destructiveHint: true } }] } };
+    const rewritten = JSON.parse(rewriteJsonText(JSON.stringify(discovery), new Set(), new Set()));
+    assert.equal(rewritten.result.tools[0].name, name);
+    assert.equal(rewritten.result.tools[0].annotations.readOnlyHint, false);
+    assert.equal(rewritten.result.tools[0].annotations.destructiveHint, true);
+    assert.equal(rewriteLocalClientResponse(discovery, new Set()).result.tools[0].name, name);
+  }
+});
+
+test('secret scanning update results use the same redaction as alert reads', () => {
+  const request = structuredClone(structuredSecretRequest);
+  request.params.name = 'update_secret_scanning_alert';
+  const ids = secretResultIdsFromRequest(request);
+  assert.ok(ids.has(request.id));
+  assertStructuredSecretRedacted(JSON.parse(
+    rewriteJsonText(JSON.stringify(structuredSecretResponse()), ids, new Set()),
+  ));
+  assertStructuredSecretRedacted(rewriteLocalClientResponse(structuredSecretResponse(), ids));
 });
