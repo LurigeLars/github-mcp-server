@@ -1,5 +1,8 @@
 # Local GitHub MCP gateway deployment
 
+The Docker gateway uses the shared local-only `dockerlocal-gateway:node-26.13.1-r1` image. Provision it first with the reviewed `build-gateway-runtime.ps1` in [Docker-MCP](https://github.com/LurigeLars/Docker-MCP) (pinned Node base, Alpine security upgrades, npm removed, immutable Scout review). The image is never pulled from a registry. Independent deployments can build and review that same versioned image locally from the recipe before starting Compose; the upstream MCP image and stdio launcher remain unchanged.
+
+
 This directory is the versioned source for the Windows/Docker deployment that exposes the **official GitHub MCP Server container** through the dedicated GitHub Cloudflare edge network.
 
 The repository itself is only the deployment/security overlay. Do not add upstream GitHub MCP Server implementation source here.

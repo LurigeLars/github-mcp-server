@@ -25,7 +25,9 @@ services:
     restart: unless-stopped
 
   github-gateway:
-    image: node:26.13.1-alpine
+    # Reviewed local gateway runtime; never pull this local-only tag from a registry.
+    image: dockerlocal-gateway:node-26.13.1-r1
+    pull_policy: never
     command:
       - sh
       - -c
